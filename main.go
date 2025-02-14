@@ -3,7 +3,9 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 
 	"golang.org/x/sys/unix"
 )
@@ -12,6 +14,7 @@ type Editor struct {
 	term       *terminalState
 	screenRows int
 	screenCols int
+	quit       chan struct{} // 終了制御用のチャネル
 }
 
 func initEditor() (*Editor, error) {
@@ -23,6 +26,7 @@ func initEditor() (*Editor, error) {
 	e := &Editor{
 		screenRows: int(ws.Row),
 		screenCols: int(ws.Col),
+		quit:       make(chan struct{}),
 	}
 
 	// Rawモードを有効化
@@ -35,24 +39,44 @@ func initEditor() (*Editor, error) {
 	return e, nil
 }
 
+// cleanup は終了時の後処理を行う
+func (e *Editor) cleanup() {
+	e.term.disableRawMode()
+	fmt.Print("\x1b[2J")
+	fmt.Print("\x1b[H")
+}
+
 func main() {
 	// エディタを初期化
 	editor, err := initEditor()
 	if err != nil {
 		die(err)
 	}
-	defer editor.term.disableRawMode()
+	defer editor.cleanup()
+
+	// シグナルハンドリングのための準備
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	// シグナルを受け取った際の処理
+	go func() {
+		<-sigChan
+		close(editor.quit) // 終了シグナルを送信
+	}()
 
 	// エディタのメインループ
 	for {
-		// 画面の再描画
-		if err := editor.refreshScreen(); err != nil {
-			die(err)
-		}
+		select {
+		case <-editor.quit:
+			return // cleanup関数が遅延実行される
+		default:
+			if err := editor.refreshScreen(); err != nil {
+				die(err)
+			}
 
-		// キー入力の処理
-		if err := editor.processKeypress(); err != nil {
-			die(err)
+			if err := editor.processKeypress(); err != nil {
+				die(err)
+			}
 		}
 	}
 }
@@ -109,9 +133,8 @@ func (e *Editor) processKeypress() error {
 
 	// Ctrl-Q または Ctrl-C で終了
 	if buf[0] == 'q'&0x1f || buf[0] == 'c'&0x1f {
-		fmt.Print("\x1b[2J")
-		fmt.Print("\x1b[H")
-		os.Exit(0)
+		close(e.quit)
+		return nil
 	}
 
 	return nil
