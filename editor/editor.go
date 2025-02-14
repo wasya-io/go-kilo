@@ -5,6 +5,8 @@ import (
 	"os"
 	"strings"
 	"time"
+	"unicode/utf8"
+	"golang.org/x/text/width"
 
 	"golang.org/x/sys/unix"
 )
@@ -62,6 +64,63 @@ func (e *Editor) Cleanup() {
 	fmt.Print("\x1b[H")
 }
 
+// 文字の表示幅を取得する
+func getCharWidth(ch rune) int {
+	p := width.LookupRune(ch)
+	switch p.Kind() {
+	case width.EastAsianFullwidth, width.EastAsianWide:
+		return 2
+	default:
+		return 1
+	}
+}
+
+// 文字列の表示幅を計算する
+func getStringWidth(s string) int {
+	width := 0
+	for _, ch := range s {
+		width += getCharWidth(ch)
+	}
+	return width
+}
+
+// スクリーン上の位置から文字列内のバイト位置を取得
+func getOffsetFromScreenPos(s string, screenPos int) int {
+	currentWidth := 0
+	currentOffset := 0
+	
+	for currentOffset < len(s) {
+		r, size := utf8.DecodeRuneInString(s[currentOffset:])
+		if r == utf8.RuneError {
+			return currentOffset
+		}
+		
+		charWidth := getCharWidth(r)
+		if currentWidth + charWidth > screenPos {
+			break
+		}
+		
+		currentWidth += charWidth
+		currentOffset += size
+	}
+	
+	return currentOffset
+}
+
+// 文字列内のバイト位置からスクリーン上の位置を取得
+func getScreenPosFromOffset(s string, offset int) int {
+	width := 0
+	for i := 0; i < offset; {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		if r == utf8.RuneError {
+			break
+		}
+		width += getCharWidth(r)
+		i += size
+	}
+	return width
+}
+
 // RefreshScreen は画面を更新する
 func (e *Editor) RefreshScreen() error {
 	var b strings.Builder
@@ -72,10 +131,24 @@ func (e *Editor) RefreshScreen() error {
 	// テキストエリアの描画
 	for y := 0; y < e.screenRows-2; y++ {
 		if y < len(e.rows) {
-			if len(e.rows[y]) > e.screenCols {
-				b.WriteString(e.rows[y][:e.screenCols])
-			} else {
-				b.WriteString(e.rows[y])
+			line := e.rows[y]
+			currentWidth := 0
+			currentOffset := 0
+			
+			for currentOffset < len(line) {
+				r, size := utf8.DecodeRuneInString(line[currentOffset:])
+				if r == utf8.RuneError {
+					break
+				}
+				
+				charWidth := getCharWidth(r)
+				if currentWidth + charWidth > e.screenCols {
+					break
+				}
+				
+				b.WriteString(line[currentOffset:currentOffset+size])
+				currentWidth += charWidth
+				currentOffset += size
 			}
 		} else {
 			b.WriteString("~")
@@ -114,8 +187,12 @@ func (e *Editor) RefreshScreen() error {
 		b.WriteString(e.message)
 	}
 
-	// カーソル位置の設定
-	fmt.Fprintf(&b, "\x1b[%d;%dH", e.cy+1, e.cx+1)
+	// カーソル位置の設定（スクリーン座標に変換）
+	screenX := 1
+	if e.cy < len(e.rows) {
+		screenX += getScreenPosFromOffset(e.rows[e.cy], e.cx)
+	}
+	fmt.Fprintf(&b, "\x1b[%d;%dH", e.cy+1, screenX)
 	b.WriteString("\x1b[?25h")
 
 	_, err := fmt.Print(b.String())
@@ -215,18 +292,14 @@ func (e *Editor) insertChar(ch rune) {
 		e.rows = append(e.rows, "")
 	}
 
-	row := []rune(e.rows[e.cy])
+	row := e.rows[e.cy]
 	if e.cx > len(row) {
 		e.cx = len(row)
 	}
 
-	newRow := make([]rune, 0, len(row)+1)
-	newRow = append(newRow, row[:e.cx]...)
-	newRow = append(newRow, ch)
-	newRow = append(newRow, row[e.cx:]...)
-
-	e.rows[e.cy] = string(newRow)
-	e.cx++
+	// 現在のカーソル位置までの文字列と残りの文字列を結合
+	e.rows[e.cy] = row[:e.cx] + string(ch) + row[e.cx:]
+	e.cx += utf8.RuneLen(ch)
 	e.dirty = true
 }
 
@@ -239,13 +312,12 @@ func (e *Editor) deleteChar() {
 		return
 	}
 
+	row := e.rows[e.cy]
 	if e.cx > 0 {
-		row := []rune(e.rows[e.cy])
-		newRow := make([]rune, 0, len(row)-1)
-		newRow = append(newRow, row[:e.cx-1]...)
-		newRow = append(newRow, row[e.cx:]...)
-		e.rows[e.cy] = string(newRow)
-		e.cx--
+		// カーソル位置の直前の文字のサイズを取得
+		_, size := utf8.DecodeLastRuneInString(row[:e.cx])
+		e.rows[e.cy] = row[:e.cx-size] + row[e.cx:]
+		e.cx -= size
 	} else {
 		if e.cy > 0 {
 			e.cx = len(e.rows[e.cy-1])
