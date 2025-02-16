@@ -14,24 +14,24 @@ import (
 
 // Row は1行のテキストデータと関連情報を保持する
 type Row struct {
-	chars    string       // 実際の文字列データ
-	widths   []int       // 各文字の表示幅
-	positions []int      // 各文字の表示位置（累積幅）
+	chars     string // 実際の文字列データ
+	widths    []int  // 各文字の表示幅
+	positions []int  // 各文字の表示位置（累積幅）
 }
 
 // Editor はエディタの状態を管理する構造体
 type Editor struct {
-	term       *terminalState
-	screenRows int
-	screenCols int
-	quit      chan struct{}
-	rows      []*Row      // Row構造体のスライスに変更
-	cx, cy    int
-	rowOffset int
-	colOffset int
-	filename  string
-	dirty     bool
-	message   string
+	term        *terminalState
+	screenRows  int
+	screenCols  int
+	quit        chan struct{}
+	rows        []*Row // Row構造体のスライスに変更
+	cx, cy      int
+	rowOffset   int
+	colOffset   int
+	filename    string
+	dirty       bool
+	message     string
 	messageTime time.Time
 }
 
@@ -50,7 +50,7 @@ func (r *Row) updateWidths() {
 	r.widths = make([]int, len(runes))
 	r.positions = make([]int, len(runes)+1)
 	pos := 0
-	
+
 	for i, ch := range runes {
 		w := getCharWidth(ch)
 		r.widths[i] = w
@@ -66,7 +66,7 @@ func (r *Row) insertChar(at int, ch rune) {
 	if at > len(runes) {
 		at = len(runes)
 	}
-	
+
 	runes = append(runes[:at], append([]rune{ch}, runes[at:]...)...)
 	r.chars = string(runes)
 	r.updateWidths()
@@ -78,7 +78,7 @@ func (r *Row) deleteChar(at int) {
 	if at >= len(runes) {
 		return
 	}
-	
+
 	r.chars = string(append(runes[:at], runes[at+1:]...))
 	r.updateWidths()
 }
@@ -103,22 +103,29 @@ func (r *Row) offsetToScreenPosition(offset int) int {
 }
 
 // New は新しいEditorインスタンスを作成する
-func New() (*Editor, error) {
-	ws, err := unix.IoctlGetWinsize(int(os.Stdout.Fd()), unix.TIOCGWINSZ)
-	if err != nil {
-		return nil, err
+func New(testMode bool) (*Editor, error) {
+	var ws *unix.Winsize
+	var err error
+	if !testMode {
+		ws, err = unix.IoctlGetWinsize(int(os.Stdout.Fd()), unix.TIOCGWINSZ)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		// テストモードの場合、デフォルトのウィンドウサイズを設定
+		ws = &unix.Winsize{Row: 24, Col: 80}
 	}
 
 	e := &Editor{
 		screenRows: int(ws.Row),
 		screenCols: int(ws.Col),
-		quit:      make(chan struct{}),
-		rows:      make([]*Row, 0),
-		cx:        0,
-		cy:        0,
-		rowOffset: 0,
-		colOffset: 0,
-		dirty:     false,
+		quit:       make(chan struct{}),
+		rows:       make([]*Row, 0),
+		cx:         0,
+		cy:         0,
+		rowOffset:  0,
+		colOffset:  0,
+		dirty:      false,
 	}
 
 	// テスト用のダミーテキストを追加
@@ -126,19 +133,23 @@ func New() (*Editor, error) {
 	e.rows = append(e.rows, newRow("Use arrow keys to move cursor."))
 	e.rows = append(e.rows, newRow("Press Ctrl-Q or Ctrl-C to quit."))
 
-	// Rawモードを有効化
-	term, err := enableRawMode()
-	if err != nil {
-		return nil, err
+	if !testMode {
+		// Rawモードを有効化
+		term, err := enableRawMode()
+		if err != nil {
+			return nil, err
+		}
+		e.term = term
 	}
-	e.term = term
 
 	return e, nil
 }
 
 // Cleanup は終了時の後処理を行う
 func (e *Editor) Cleanup() {
-	e.term.disableRawMode()
+	if e.term != nil {
+		e.term.disableRawMode()
+	}
 	fmt.Print("\x1b[2J")
 	fmt.Print("\x1b[H")
 }
@@ -240,7 +251,7 @@ func (e *Editor) RefreshScreen() error {
 			row := e.rows[filerow]
 			runes := []rune(row.chars)
 			startIdx := row.screenPositionToOffset(e.colOffset)
-			
+
 			if startIdx >= 0 {
 				currentWidth := row.positions[startIdx] - e.colOffset
 				for i := startIdx; i < len(runes); i++ {
@@ -304,37 +315,47 @@ func (e *Editor) RefreshScreen() error {
 
 // ProcessKeypress はキー入力を処理する
 func (e *Editor) ProcessKeypress() error {
-	buf := make([]byte, 1)
-	_, err := os.Stdin.Read(buf)
+	// 最大4バイトのUTF-8文字を読み取れるようにする
+	buf := make([]byte, 4)
+	n, err := os.Stdin.Read(buf)
 	if err != nil {
 		return err
 	}
-
-	switch buf[0] {
-	case 'q' & 0x1f, 'c' & 0x1f: // Ctrl-Q または Ctrl-C
-		if e.dirty {
-			e.setStatusMessage("Warning! File has unsaved changes. Press Ctrl-Q or Ctrl-C again to quit.")
-			e.dirty = false
+	
+	// 制御文字のチェック
+	if n == 1 {
+		switch buf[0] {
+		case 'q' & 0x1f, 'c' & 0x1f: // Ctrl-Q または Ctrl-C
+			if e.dirty {
+				e.setStatusMessage("Warning! File has unsaved changes. Press Ctrl-Q or Ctrl-C again to quit.")
+				e.dirty = false
+				return nil
+			}
+			close(e.quit)
 			return nil
+		case 's' & 0x1f: // Ctrl-S
+			if err := e.SaveFile(); err != nil {
+				e.setStatusMessage("Can't save! I/O error: %s", err)
+			}
+			return nil
+		case '\x1b':
+			if err := e.readEscapeSequence(); err != nil {
+				return err
+			}
+		case '\r':
+			e.insertNewline()
+		case 127:
+			e.deleteChar()
+		default:
+			if !iscntrl(buf[0]) {
+				e.insertChar(rune(buf[0]))
+			}
 		}
-		close(e.quit)
-		return nil
-	case 's' & 0x1f: // Ctrl-S
-		if err := e.SaveFile(); err != nil {
-			e.setStatusMessage("Can't save! I/O error: %s", err)
-		}
-		return nil
-	case '\x1b':
-		if err := e.readEscapeSequence(); err != nil {
-			return err
-		}
-	case '\r':
-		e.insertNewline()
-	case 127:
-		e.deleteChar()
-	default:
-		if !iscntrl(buf[0]) {
-			e.insertChar(rune(buf[0]))
+	} else {
+		// マルチバイト文字の処理
+		r, _ := utf8.DecodeRune(buf[:n])
+		if r != utf8.RuneError {
+			e.insertChar(r)
 		}
 	}
 
@@ -481,7 +502,7 @@ func (e *Editor) OpenFile(filename string) error {
 	for i, line := range lines {
 		e.rows[i] = newRow(line)
 	}
-	
+
 	e.dirty = false
 	e.setStatusMessage("File loaded")
 	return nil
@@ -498,7 +519,7 @@ func (e *Editor) SaveFile() error {
 	for i, row := range e.rows {
 		content[i] = row.chars
 	}
-	
+
 	err := os.WriteFile(e.filename, []byte(strings.Join(content, "\n")), 0644)
 	if err != nil {
 		return err
@@ -513,4 +534,20 @@ func (e *Editor) SaveFile() error {
 func (e *Editor) setStatusMessage(format string, args ...interface{}) {
 	e.message = fmt.Sprintf(format, args...)
 	e.messageTime = time.Now()
+}
+
+// GetRows は行のコンテンツを文字列のスライスとして返す
+// テスト用に実装
+func (e *Editor) GetRows() []string {
+	result := make([]string, len(e.rows))
+	for i, row := range e.rows {
+		result[i] = row.chars
+	}
+	return result
+}
+
+// TestInput はテスト用にキー入力をシミュレートする
+func (e *Editor) TestInput(r rune) error {
+	e.insertChar(r)
+	return nil
 }

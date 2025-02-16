@@ -18,7 +18,7 @@ func die(err error) {
 
 func main() {
 	// エディタを初期化
-	ed, err := editor.New()
+	ed, err := editor.New(false)
 	if err != nil {
 		die(err)
 	}

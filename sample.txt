@@ -1,0 +1,7 @@
+Go-Kilo Editor Test - sample -
+This is line 2
+You can:
+- Move curs or with arrow keys
+- Edit text
+- Save with Ctrl-S
+- Quit with Ctrl-C or Ctrl-Q
