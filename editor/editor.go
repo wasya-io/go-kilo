@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
 	"golang.org/x/text/width"
 
 	"golang.org/x/sys/unix"
@@ -19,6 +20,8 @@ type Editor struct {
 	quit        chan struct{}
 	rows        []string
 	cx, cy      int
+	rowOffset   int       // スクロール位置（垂直）
+	colOffset   int       // スクロール位置（水平）
 	filename    string    // 編集中のファイル名
 	dirty       bool      // 未保存の変更があるかどうか
 	message     string    // ステータスメッセージ
@@ -39,6 +42,8 @@ func New() (*Editor, error) {
 		rows:       make([]string, 0),
 		cx:         0,
 		cy:         0,
+		rowOffset:  0,
+		colOffset:  0,
 		dirty:      false,
 	}
 
@@ -88,22 +93,22 @@ func getStringWidth(s string) int {
 func getOffsetFromScreenPos(s string, screenPos int) int {
 	currentWidth := 0
 	currentOffset := 0
-	
+
 	for currentOffset < len(s) {
 		r, size := utf8.DecodeRuneInString(s[currentOffset:])
 		if r == utf8.RuneError {
 			return currentOffset
 		}
-		
+
 		charWidth := getCharWidth(r)
-		if currentWidth + charWidth > screenPos {
+		if currentWidth+charWidth > screenPos {
 			break
 		}
-		
+
 		currentWidth += charWidth
 		currentOffset += size
 	}
-	
+
 	return currentOffset
 }
 
@@ -121,8 +126,34 @@ func getScreenPosFromOffset(s string, offset int) int {
 	return width
 }
 
+// scroll は必要に応じてスクロール位置を更新する
+func (e *Editor) scroll() {
+	// 垂直スクロール
+	if e.cy < e.rowOffset {
+		e.rowOffset = e.cy
+	}
+	if e.cy >= e.rowOffset+e.screenRows-2 {
+		e.rowOffset = e.cy - (e.screenRows - 3)
+	}
+
+	// 水平スクロール
+	screenX := 0
+	if e.cy < len(e.rows) {
+		screenX = getScreenPosFromOffset(e.rows[e.cy], e.cx)
+	}
+
+	if screenX < e.colOffset {
+		e.colOffset = screenX
+	}
+	if screenX >= e.colOffset+e.screenCols {
+		e.colOffset = screenX - e.screenCols + 1
+	}
+}
+
 // RefreshScreen は画面を更新する
 func (e *Editor) RefreshScreen() error {
+	e.scroll()
+
 	var b strings.Builder
 
 	b.WriteString("\x1b[?25l")
@@ -130,23 +161,35 @@ func (e *Editor) RefreshScreen() error {
 
 	// テキストエリアの描画
 	for y := 0; y < e.screenRows-2; y++ {
-		if y < len(e.rows) {
-			line := e.rows[y]
-			currentWidth := 0
+		filerow := y + e.rowOffset
+		if filerow < len(e.rows) {
+			line := e.rows[filerow]
+			currentWidth := -e.colOffset
 			currentOffset := 0
-			
+
+			// スクロール位置まで読み飛ばし
+			for currentOffset < len(line) && currentWidth < 0 {
+				r, size := utf8.DecodeRuneInString(line[currentOffset:])
+				if r == utf8.RuneError {
+					break
+				}
+				currentWidth += getCharWidth(r)
+				currentOffset += size
+			}
+
+			// 表示範囲の文字を描画
 			for currentOffset < len(line) {
 				r, size := utf8.DecodeRuneInString(line[currentOffset:])
 				if r == utf8.RuneError {
 					break
 				}
-				
+
 				charWidth := getCharWidth(r)
-				if currentWidth + charWidth > e.screenCols {
+				if currentWidth+charWidth > e.screenCols {
 					break
 				}
-				
-				b.WriteString(line[currentOffset:currentOffset+size])
+
+				b.WriteString(line[currentOffset : currentOffset+size])
 				currentWidth += charWidth
 				currentOffset += size
 			}
@@ -187,12 +230,13 @@ func (e *Editor) RefreshScreen() error {
 		b.WriteString(e.message)
 	}
 
-	// カーソル位置の設定（スクリーン座標に変換）
+	// カーソル位置の設定（スクロール位置を考慮）
 	screenX := 1
 	if e.cy < len(e.rows) {
-		screenX += getScreenPosFromOffset(e.rows[e.cy], e.cx)
+		screenX = getScreenPosFromOffset(e.rows[e.cy], e.cx) - e.colOffset + 1
 	}
-	fmt.Fprintf(&b, "\x1b[%d;%dH", e.cy+1, screenX)
+	filerow := e.cy - e.rowOffset + 1
+	fmt.Fprintf(&b, "\x1b[%d;%dH", filerow, screenX)
 	b.WriteString("\x1b[?25h")
 
 	_, err := fmt.Print(b.String())
@@ -267,14 +311,23 @@ func (e *Editor) readEscapeSequence() error {
 				e.cy++
 			}
 		case 'C': // 右矢印
-			if e.cx < e.screenCols-1 {
-				if e.cy < len(e.rows) && e.cx < len(e.rows[e.cy]) {
+			if e.cy < len(e.rows) {
+				// 現在行の末尾までカーソル移動可能
+				if e.cx < len(e.rows[e.cy]) {
 					e.cx++
 				}
 			}
 		case 'D': // 左矢印
 			if e.cx > 0 {
 				e.cx--
+			}
+		}
+
+		// 行移動時のカーソル位置調整
+		if e.cy < len(e.rows) {
+			rowLen := len(e.rows[e.cy])
+			if e.cx > rowLen {
+				e.cx = rowLen
 			}
 		}
 	}
