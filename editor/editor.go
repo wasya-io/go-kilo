@@ -12,20 +12,94 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// Row は1行のテキストデータと関連情報を保持する
+type Row struct {
+	chars    string       // 実際の文字列データ
+	widths   []int       // 各文字の表示幅
+	positions []int      // 各文字の表示位置（累積幅）
+}
+
 // Editor はエディタの状態を管理する構造体
 type Editor struct {
-	term        *terminalState
-	screenRows  int
-	screenCols  int
-	quit        chan struct{}
-	rows        []string
-	cx, cy      int
-	rowOffset   int       // スクロール位置（垂直）
-	colOffset   int       // スクロール位置（水平）
-	filename    string    // 編集中のファイル名
-	dirty       bool      // 未保存の変更があるかどうか
-	message     string    // ステータスメッセージ
-	messageTime time.Time // メッセージの表示時間
+	term       *terminalState
+	screenRows int
+	screenCols int
+	quit      chan struct{}
+	rows      []*Row      // Row構造体のスライスに変更
+	cx, cy    int
+	rowOffset int
+	colOffset int
+	filename  string
+	dirty     bool
+	message   string
+	messageTime time.Time
+}
+
+// newRow は新しいRow構造体を作成する
+func newRow(chars string) *Row {
+	r := &Row{
+		chars: chars,
+	}
+	r.updateWidths()
+	return r
+}
+
+// updateWidths は行の文字幅情報を更新する
+func (r *Row) updateWidths() {
+	runes := []rune(r.chars)
+	r.widths = make([]int, len(runes))
+	r.positions = make([]int, len(runes)+1)
+	pos := 0
+	
+	for i, ch := range runes {
+		w := getCharWidth(ch)
+		r.widths[i] = w
+		r.positions[i] = pos
+		pos += w
+	}
+	r.positions[len(runes)] = pos // 最後の位置も記録
+}
+
+// insertChar は指定位置に文字を挿入する
+func (r *Row) insertChar(at int, ch rune) {
+	runes := []rune(r.chars)
+	if at > len(runes) {
+		at = len(runes)
+	}
+	
+	runes = append(runes[:at], append([]rune{ch}, runes[at:]...)...)
+	r.chars = string(runes)
+	r.updateWidths()
+}
+
+// deleteChar は指定位置の文字を削除する
+func (r *Row) deleteChar(at int) {
+	runes := []rune(r.chars)
+	if at >= len(runes) {
+		return
+	}
+	
+	r.chars = string(append(runes[:at], runes[at+1:]...))
+	r.updateWidths()
+}
+
+// screenPositionToOffset は画面上の位置から文字列中のオフセットを取得する
+func (r *Row) screenPositionToOffset(screenPos int) int {
+	for i, pos := range r.positions {
+		if pos > screenPos {
+			return i - 1
+		}
+	}
+	return len([]rune(r.chars))
+}
+
+// offsetToScreenPosition は文字列中のオフセットから画面上の位置を取得する
+func (r *Row) offsetToScreenPosition(offset int) int {
+	runes := []rune(r.chars)
+	if offset >= len(runes) {
+		return r.positions[len(runes)]
+	}
+	return r.positions[offset]
 }
 
 // New は新しいEditorインスタンスを作成する
@@ -38,19 +112,19 @@ func New() (*Editor, error) {
 	e := &Editor{
 		screenRows: int(ws.Row),
 		screenCols: int(ws.Col),
-		quit:       make(chan struct{}),
-		rows:       make([]string, 0),
-		cx:         0,
-		cy:         0,
-		rowOffset:  0,
-		colOffset:  0,
-		dirty:      false,
+		quit:      make(chan struct{}),
+		rows:      make([]*Row, 0),
+		cx:        0,
+		cy:        0,
+		rowOffset: 0,
+		colOffset: 0,
+		dirty:     false,
 	}
 
 	// テスト用のダミーテキストを追加
-	e.rows = append(e.rows, "Hello, Go-Kilo editor!")
-	e.rows = append(e.rows, "Use arrow keys to move cursor.")
-	e.rows = append(e.rows, "Press Ctrl-Q or Ctrl-C to quit.")
+	e.rows = append(e.rows, newRow("Hello, Go-Kilo editor!"))
+	e.rows = append(e.rows, newRow("Use arrow keys to move cursor."))
+	e.rows = append(e.rows, newRow("Press Ctrl-Q or Ctrl-C to quit."))
 
 	// Rawモードを有効化
 	term, err := enableRawMode()
@@ -139,7 +213,7 @@ func (e *Editor) scroll() {
 	// 水平スクロール
 	screenX := 0
 	if e.cy < len(e.rows) {
-		screenX = getScreenPosFromOffset(e.rows[e.cy], e.cx)
+		screenX = e.rows[e.cy].offsetToScreenPosition(e.cx)
 	}
 
 	if screenX < e.colOffset {
@@ -163,35 +237,19 @@ func (e *Editor) RefreshScreen() error {
 	for y := 0; y < e.screenRows-2; y++ {
 		filerow := y + e.rowOffset
 		if filerow < len(e.rows) {
-			line := e.rows[filerow]
-			currentWidth := -e.colOffset
-			currentOffset := 0
-
-			// スクロール位置まで読み飛ばし
-			for currentOffset < len(line) && currentWidth < 0 {
-				r, size := utf8.DecodeRuneInString(line[currentOffset:])
-				if r == utf8.RuneError {
-					break
+			row := e.rows[filerow]
+			runes := []rune(row.chars)
+			startIdx := row.screenPositionToOffset(e.colOffset)
+			
+			if startIdx >= 0 {
+				currentWidth := row.positions[startIdx] - e.colOffset
+				for i := startIdx; i < len(runes); i++ {
+					if currentWidth >= e.screenCols {
+						break
+					}
+					b.WriteString(string(runes[i]))
+					currentWidth += row.widths[i]
 				}
-				currentWidth += getCharWidth(r)
-				currentOffset += size
-			}
-
-			// 表示範囲の文字を描画
-			for currentOffset < len(line) {
-				r, size := utf8.DecodeRuneInString(line[currentOffset:])
-				if r == utf8.RuneError {
-					break
-				}
-
-				charWidth := getCharWidth(r)
-				if currentWidth+charWidth > e.screenCols {
-					break
-				}
-
-				b.WriteString(line[currentOffset : currentOffset+size])
-				currentWidth += charWidth
-				currentOffset += size
 			}
 		} else {
 			b.WriteString("~")
@@ -233,7 +291,8 @@ func (e *Editor) RefreshScreen() error {
 	// カーソル位置の設定（スクロール位置を考慮）
 	screenX := 1
 	if e.cy < len(e.rows) {
-		screenX = getScreenPosFromOffset(e.rows[e.cy], e.cx) - e.colOffset + 1
+		row := e.rows[e.cy]
+		screenX = row.offsetToScreenPosition(e.cx) - e.colOffset + 1
 	}
 	filerow := e.cy - e.rowOffset + 1
 	fmt.Fprintf(&b, "\x1b[%d;%dH", filerow, screenX)
@@ -313,7 +372,7 @@ func (e *Editor) readEscapeSequence() error {
 		case 'C': // 右矢印
 			if e.cy < len(e.rows) {
 				// 現在行の末尾までカーソル移動可能
-				if e.cx < len(e.rows[e.cy]) {
+				if e.cx < len([]rune(e.rows[e.cy].chars)) {
 					e.cx++
 				}
 			}
@@ -325,7 +384,7 @@ func (e *Editor) readEscapeSequence() error {
 
 		// 行移動時のカーソル位置調整
 		if e.cy < len(e.rows) {
-			rowLen := len(e.rows[e.cy])
+			rowLen := len([]rune(e.rows[e.cy].chars))
 			if e.cx > rowLen {
 				e.cx = rowLen
 			}
@@ -342,17 +401,12 @@ func iscntrl(b byte) bool {
 // insertChar は現在のカーソル位置に文字を挿入する
 func (e *Editor) insertChar(ch rune) {
 	if e.cy == len(e.rows) {
-		e.rows = append(e.rows, "")
+		e.rows = append(e.rows, newRow(""))
 	}
 
 	row := e.rows[e.cy]
-	if e.cx > len(row) {
-		e.cx = len(row)
-	}
-
-	// 現在のカーソル位置までの文字列と残りの文字列を結合
-	e.rows[e.cy] = row[:e.cx] + string(ch) + row[e.cx:]
-	e.cx += utf8.RuneLen(ch)
+	row.insertChar(e.cx, ch)
+	e.cx++
 	e.dirty = true
 }
 
@@ -367,14 +421,14 @@ func (e *Editor) deleteChar() {
 
 	row := e.rows[e.cy]
 	if e.cx > 0 {
-		// カーソル位置の直前の文字のサイズを取得
-		_, size := utf8.DecodeLastRuneInString(row[:e.cx])
-		e.rows[e.cy] = row[:e.cx-size] + row[e.cx:]
-		e.cx -= size
+		row.deleteChar(e.cx - 1)
+		e.cx--
 	} else {
 		if e.cy > 0 {
-			e.cx = len(e.rows[e.cy-1])
-			e.rows[e.cy-1] += e.rows[e.cy]
+			prevRow := e.rows[e.cy-1]
+			e.cx = len([]rune(prevRow.chars))
+			prevRow.chars += row.chars
+			prevRow.updateWidths()
 			e.rows = append(e.rows[:e.cy], e.rows[e.cy+1:]...)
 			e.cy--
 		}
@@ -385,13 +439,14 @@ func (e *Editor) deleteChar() {
 // insertNewline は現在のカーソル位置で改行を挿入する
 func (e *Editor) insertNewline() {
 	if e.cx == 0 {
-		e.rows = append(e.rows[:e.cy], append([]string{""}, e.rows[e.cy:]...)...)
+		e.rows = append(e.rows[:e.cy], append([]*Row{newRow("")}, e.rows[e.cy:]...)...)
 	} else {
 		row := e.rows[e.cy]
-		e.rows = append(e.rows[:e.cy], append([]string{
-			row[:e.cx],
-			row[e.cx:],
-		}, e.rows[e.cy+1:]...)...)
+		runes := []rune(row.chars)
+		newRow := newRow(string(runes[e.cx:]))
+		row.chars = string(runes[:e.cx])
+		row.updateWidths()
+		e.rows = append(e.rows[:e.cy+1], append([]*Row{newRow}, e.rows[e.cy+1:]...)...)
 	}
 	e.cy++
 	e.cx = 0
@@ -406,7 +461,7 @@ func (e *Editor) OpenFile(filename string) error {
 	if err != nil {
 		if os.IsNotExist(err) {
 			// 新規ファイルの場合は空のバッファを用意
-			e.rows = make([]string, 0)
+			e.rows = make([]*Row, 0)
 			e.setStatusMessage("New file")
 			return nil
 		}
@@ -421,7 +476,12 @@ func (e *Editor) OpenFile(filename string) error {
 	}
 
 	// 改行で分割して行を取得
-	e.rows = strings.Split(strings.TrimRight(string(content), "\n"), "\n")
+	lines := strings.Split(strings.TrimRight(string(content), "\n"), "\n")
+	e.rows = make([]*Row, len(lines))
+	for i, line := range lines {
+		e.rows[i] = newRow(line)
+	}
+	
 	e.dirty = false
 	e.setStatusMessage("File loaded")
 	return nil
@@ -434,8 +494,12 @@ func (e *Editor) SaveFile() error {
 		return nil
 	}
 
-	content := strings.Join(e.rows, "\n")
-	err := os.WriteFile(e.filename, []byte(content), 0644)
+	content := make([]string, len(e.rows))
+	for i, row := range e.rows {
+		content[i] = row.chars
+	}
+	
+	err := os.WriteFile(e.filename, []byte(strings.Join(content, "\n")), 0644)
 	if err != nil {
 		return err
 	}
