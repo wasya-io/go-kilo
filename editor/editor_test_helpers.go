@@ -20,7 +20,7 @@ const (
 func (e *Editor) GetRows() []string {
 	result := make([]string, len(e.rows))
 	for i, row := range e.rows {
-		result[i] = row.chars
+		result[i] = row.GetContent()
 	}
 	return result
 }
@@ -38,7 +38,7 @@ func (e *Editor) TestSetCursor(x, y int) error {
 	}
 	if y >= 0 && x >= 0 {
 		e.cy = y
-		runes := []rune(e.rows[y].chars)
+		runes := []rune(e.rows[y].GetContent())
 		if x > len(runes) {
 			x = len(runes)
 		}
@@ -57,33 +57,23 @@ func (e *Editor) TestMoveCursor(m CursorMovement) error {
 	switch m {
 	case CursorUp:
 		if e.cy > 0 {
-			// 現在位置のスクリーンポジションを取得
 			currentRow := e.rows[e.cy]
-			targetScreenPos := currentRow.offsetToScreenPosition(e.cx)
-
-			// 上の行に移動
+			targetScreenPos := currentRow.OffsetToScreenPosition(e.cx)
 			e.cy--
-
-			// 新しい行での対応する位置を設定
 			newRow := e.rows[e.cy]
-			e.cx = newRow.screenPositionToOffset(targetScreenPos)
+			e.cx = newRow.ScreenPositionToOffset(targetScreenPos)
 		}
 	case CursorDown:
 		if e.cy < len(e.rows)-1 {
-			// 現在位置のスクリーンポジションを取得
 			currentRow := e.rows[e.cy]
-			targetScreenPos := currentRow.offsetToScreenPosition(e.cx)
-
-			// 下の行に移動
+			targetScreenPos := currentRow.OffsetToScreenPosition(e.cx)
 			e.cy++
-
-			// 新しい行での対応する位置を設定
 			newRow := e.rows[e.cy]
-			e.cx = newRow.screenPositionToOffset(targetScreenPos)
+			e.cx = newRow.ScreenPositionToOffset(targetScreenPos)
 		}
 	case CursorRight:
 		if e.cy < len(e.rows) {
-			runes := []rune(e.rows[e.cy].chars)
+			runes := []rune(e.rows[e.cy].GetContent())
 			if e.cx < len(runes) {
 				e.cx++
 			}
@@ -96,6 +86,11 @@ func (e *Editor) TestMoveCursor(m CursorMovement) error {
 	return nil
 }
 
+// isControl は制御文字かどうかを判定する
+func isControl(c byte) bool {
+	return c < 32 || c == 127
+}
+
 // TestProcessInput はテスト用にキー入力をシミュレートする
 func (e *Editor) TestProcessInput(input []byte) error {
 	if len(input) >= 3 && input[0] == '\x1b' && input[1] == '[' {
@@ -103,16 +98,16 @@ func (e *Editor) TestProcessInput(input []byte) error {
 		case 'A': // 上矢印
 			if e.cy > 0 {
 				e.cy--
-				e.adjustCursorX()
+				e.updateCursorPosition()
 			}
 		case 'B': // 下矢印
 			if e.cy < len(e.rows)-1 {
 				e.cy++
-				e.adjustCursorX()
+				e.updateCursorPosition()
 			}
 		case 'C': // 右矢印
 			if e.cy < len(e.rows) {
-				runes := []rune(e.rows[e.cy].chars)
+				runes := []rune(e.rows[e.cy].GetContent())
 				if e.cx < len(runes) {
 					e.cx++
 				} else if e.cy < len(e.rows)-1 {
@@ -125,7 +120,7 @@ func (e *Editor) TestProcessInput(input []byte) error {
 				e.cx--
 			} else if e.cy > 0 {
 				e.cy--
-				runes := []rune(e.rows[e.cy].chars)
+				runes := []rune(e.rows[e.cy].GetContent())
 				e.cx = len(runes)
 			}
 		}
@@ -140,7 +135,7 @@ func (e *Editor) TestProcessInput(input []byte) error {
 
 	// 通常の文字入力処理
 	if len(input) == 1 {
-		if !iscntrl(input[0]) {
+		if !isControl(input[0]) {
 			e.insertChar(rune(input[0]))
 		}
 	} else {
@@ -165,22 +160,32 @@ func (e *Editor) SetRowsForTest(rows []*Row) {
 	e.rows = rows
 }
 
+// updateCursorPosition はカーソル位置を適切な範囲に調整する
+func (e *Editor) updateCursorPosition() {
+	if e.cy < len(e.rows) {
+		runes := []rune(e.rows[e.cy].GetContent())
+		if e.cx > len(runes) {
+			e.cx = len(runes)
+		}
+	}
+}
+
 // TestMoveCursorByByte はテスト用にカーソルを移動する
 func (e *Editor) TestMoveCursorByByte(direction byte) error {
 	switch direction {
 	case 'A': // Up
 		if e.cy > 0 {
 			e.cy--
-			e.adjustCursorX()
+			e.updateCursorPosition()
 		}
 	case 'B': // Down
 		if e.cy < len(e.rows)-1 {
 			e.cy++
-			e.adjustCursorX()
+			e.updateCursorPosition()
 		}
 	case 'C': // Right
 		if e.cy < len(e.rows) {
-			runes := []rune(e.rows[e.cy].chars)
+			runes := []rune(e.rows[e.cy].GetContent())
 			if e.cx < len(runes) {
 				e.cx++
 			} else if e.cy < len(e.rows)-1 {
@@ -193,7 +198,7 @@ func (e *Editor) TestMoveCursorByByte(direction byte) error {
 			e.cx--
 		} else if e.cy > 0 {
 			e.cy--
-			runes := []rune(e.rows[e.cy].chars)
+			runes := []rune(e.rows[e.cy].GetContent())
 			e.cx = len(runes)
 		}
 	default:

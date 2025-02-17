@@ -1,4 +1,4 @@
-module github.com/go-kilo
+module go-kilo
 
 go 1.21
 

@@ -6,7 +6,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/go-kilo/editor"
+	"go-kilo/editor"
 )
 
 func die(err error) {
