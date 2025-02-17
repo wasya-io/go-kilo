@@ -1,5 +1,21 @@
 # CHANGELOG
 
+## [Unreleased]
+### Changed
+- テストヘルパーメソッドを `editor.go` から `editor_test_helpers.go` に分離
+- `CursorMovement` 型の定義を改善し、テストでの使用をより直感的に
+
+### Added
+- `editor_test_helpers.go` ファイルを新規作成し、以下のテストヘルパーメソッドを移動
+  - `GetRows`
+  - `TestInput`
+  - `TestSetCursor`
+  - `TestGetCursor`
+  - `TestMoveCursor`
+  - `TestProcessInput`
+  - `TestDelete`
+  - `TestMoveCursorByByte`
+
 ## [0.0.12] - 2024-01-08
 
 ### Fixed

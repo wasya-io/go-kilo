@@ -315,14 +315,74 @@ func (e *Editor) RefreshScreen() error {
 
 // ProcessKeypress はキー入力を処理する
 func (e *Editor) ProcessKeypress() error {
-	// 最大4バイトのUTF-8文字を読み取れるようにする
-	buf := make([]byte, 4)
+	buf := make([]byte, 32)
 	n, err := os.Stdin.Read(buf)
 	if err != nil {
 		return err
 	}
-	
-	// 制御文字のチェック
+
+	// エスケープシーケンスの処理
+	if n > 0 && buf[0] == '\x1b' {
+		// エスケープシーケンスの先頭を検出
+		if n < 3 {
+			// バッファに3バイト未満しかない場合は追加で読み取り
+			seq := make([]byte, 2)
+			nseq, err := os.Stdin.Read(seq)
+			if err != nil || nseq != 2 {
+				return nil // 不完全なエスケープシーケンス
+			}
+			// バッファを結合
+			copy(buf[n:], seq[:nseq])
+			n += nseq
+		}
+
+		// エスケープシーケンスの解析
+		if buf[1] == '[' {
+			switch buf[2] {
+			case 'A': // 上矢印
+				if e.cy > 0 {
+					e.cy--
+					e.adjustCursorX()
+				}
+				return nil
+			case 'B': // 下矢印
+				if e.cy < len(e.rows)-1 {
+					e.cy++
+					e.adjustCursorX()
+				}
+				return nil
+			case 'C': // 右矢印
+				if e.cy < len(e.rows) {
+					runes := []rune(e.rows[e.cy].chars)
+					if e.cx < len(runes) {
+						e.cx++
+					} else if e.cy < len(e.rows)-1 {
+						e.cy++
+						e.cx = 0
+					}
+				}
+				return nil
+			case 'D': // 左矢印
+				if e.cx > 0 {
+					e.cx--
+				} else if e.cy > 0 {
+					e.cy--
+					runes := []rune(e.rows[e.cy].chars)
+					e.cx = len(runes)
+				}
+				return nil
+			}
+		}
+		return nil
+	}
+
+	// バックスペースの処理
+	if n == 1 && buf[0] == 127 {
+		e.deleteChar()
+		return nil
+	}
+
+	// 他の制御文字の処理
 	if n == 1 {
 		switch buf[0] {
 		case 'q' & 0x1f, 'c' & 0x1f: // Ctrl-Q または Ctrl-C
@@ -338,25 +398,21 @@ func (e *Editor) ProcessKeypress() error {
 				e.setStatusMessage("Can't save! I/O error: %s", err)
 			}
 			return nil
-		case '\x1b':
-			if err := e.readEscapeSequence(); err != nil {
-				return err
-			}
 		case '\r':
 			e.insertNewline()
-		case 127:
-			e.deleteChar()
-		default:
-			if !iscntrl(buf[0]) {
-				e.insertChar(rune(buf[0]))
-			}
+			return nil
 		}
-	} else {
-		// マルチバイト文字の処理
-		r, _ := utf8.DecodeRune(buf[:n])
+	}
+
+	// 通常の文字入力処理
+	// UTF-8のマルチバイト文字を適切に処理
+	data := buf[:n]
+	for len(data) > 0 {
+		r, size := utf8.DecodeRune(data)
 		if r != utf8.RuneError {
 			e.insertChar(r)
 		}
+		data = data[size:]
 	}
 
 	return nil
@@ -372,46 +428,14 @@ func (e *Editor) Quit() {
 	close(e.quit)
 }
 
-// readEscapeSequence は矢印キーなどのエスケープシーケンスを読み取る
-func (e *Editor) readEscapeSequence() error {
-	buf := make([]byte, 2)
-	_, err := os.Stdin.Read(buf)
-	if err != nil {
-		return err
-	}
-
-	if buf[0] == '[' {
-		switch buf[1] {
-		case 'A': // 上矢印
-			if e.cy > 0 {
-				e.cy--
-			}
-		case 'B': // 下矢印
-			if e.cy < len(e.rows)-1 {
-				e.cy++
-			}
-		case 'C': // 右矢印
-			if e.cy < len(e.rows) {
-				// 現在行の末尾までカーソル移動可能
-				if e.cx < len([]rune(e.rows[e.cy].chars)) {
-					e.cx++
-				}
-			}
-		case 'D': // 左矢印
-			if e.cx > 0 {
-				e.cx--
-			}
-		}
-
-		// 行移動時のカーソル位置調整
-		if e.cy < len(e.rows) {
-			rowLen := len([]rune(e.rows[e.cy].chars))
-			if e.cx > rowLen {
-				e.cx = rowLen
-			}
+// adjustCursorX はカーソルのX座標を現在の行の長さに合わせて調整する
+func (e *Editor) adjustCursorX() {
+	if e.cy < len(e.rows) {
+		runes := []rune(e.rows[e.cy].chars)
+		if e.cx > len(runes) {
+			e.cx = len(runes)
 		}
 	}
-	return nil
 }
 
 // iscntrl は制御文字かどうかを判定する
@@ -534,20 +558,4 @@ func (e *Editor) SaveFile() error {
 func (e *Editor) setStatusMessage(format string, args ...interface{}) {
 	e.message = fmt.Sprintf(format, args...)
 	e.messageTime = time.Now()
-}
-
-// GetRows は行のコンテンツを文字列のスライスとして返す
-// テスト用に実装
-func (e *Editor) GetRows() []string {
-	result := make([]string, len(e.rows))
-	for i, row := range e.rows {
-		result[i] = row.chars
-	}
-	return result
-}
-
-// TestInput はテスト用にキー入力をシミュレートする
-func (e *Editor) TestInput(r rune) error {
-	e.insertChar(r)
-	return nil
 }
