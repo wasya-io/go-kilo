@@ -1,6 +1,12 @@
 # CHANGELOG
 
 ## [Unreleased]
+### Fixed
+- 日本語入力モードでの文字入力に関する問題を修正
+  - IMEを通じた複数文字の一括入力に対応
+  - StandardKeyReaderに入力バッファを追加
+  - マルチバイト文字の連続入力処理を改善
+
 ### Changed
 - テストヘルパーメソッドを `editor.go` から `editor_test_helpers.go` に分離
 - `CursorMovement` 型の定義を改善し、テストでの使用をより直感的に

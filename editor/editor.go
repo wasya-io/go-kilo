@@ -5,7 +5,6 @@ import (
 	"os"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"golang.org/x/text/width"
 
@@ -34,6 +33,7 @@ type Editor struct {
 	message     string
 	messageTime time.Time
 	storage     Storage
+	keyReader   KeyReader // 追加: キー入力読み取りインターフェース
 }
 
 // newRow は新しいRow構造体を作成する
@@ -113,7 +113,6 @@ func New(testMode bool) (*Editor, error) {
 			return nil, err
 		}
 	} else {
-		// テストモードの場合、デフォルトのウィンドウサイズを設定
 		ws = &unix.Winsize{Row: 24, Col: 80}
 	}
 
@@ -128,14 +127,15 @@ func New(testMode bool) (*Editor, error) {
 		colOffset:  0,
 		dirty:      false,
 		storage:    NewFileStorage(),
+		keyReader:  NewStandardKeyReader(),
 	}
 
-	// テスト用のダミーテキストを追加
-	e.rows = append(e.rows, newRow("Hello, Go-Kilo editor!"))
-	e.rows = append(e.rows, newRow("Use arrow keys to move cursor."))
-	e.rows = append(e.rows, newRow("Press Ctrl-Q or Ctrl-C to quit."))
-
 	if !testMode {
+		// テスト以外の場合のみデフォルトテキストを追加
+		e.rows = append(e.rows, newRow("Hello, Go-Kilo editor!"))
+		e.rows = append(e.rows, newRow("Use arrow keys to move cursor."))
+		e.rows = append(e.rows, newRow("Press Ctrl-Q or Ctrl-C to quit."))
+
 		// Rawモードを有効化
 		term, err := enableRawMode()
 		if err != nil {
@@ -271,106 +271,77 @@ func (e *Editor) RefreshScreen() error {
 
 // ProcessKeypress はキー入力を処理する
 func (e *Editor) ProcessKeypress() error {
-	buf := make([]byte, 32)
-	n, err := os.Stdin.Read(buf)
+	event, err := e.keyReader.ReadKey()
 	if err != nil {
 		return err
 	}
 
-	// エスケープシーケンスの処理
-	if n > 0 && buf[0] == '\x1b' {
-		// エスケープシーケンスの先頭を検出
-		if n < 3 {
-			// バッファに3バイト未満しかない場合は追加で読み取り
-			seq := make([]byte, 2)
-			nseq, err := os.Stdin.Read(seq)
-			if err != nil || nseq != 2 {
-				return nil // 不完全なエスケープシーケンス
-			}
-			// バッファを結合
-			copy(buf[n:], seq[:nseq])
-			n += nseq
-		}
-
-		// エスケープシーケンスの解析
-		if buf[1] == '[' {
-			switch buf[2] {
-			case 'A': // 上矢印
-				if e.cy > 0 {
-					e.cy--
-					e.adjustCursorX()
-				}
-				return nil
-			case 'B': // 下矢印
-				if e.cy < len(e.rows)-1 {
-					e.cy++
-					e.adjustCursorX()
-				}
-				return nil
-			case 'C': // 右矢印
-				if e.cy < len(e.rows) {
-					runes := []rune(e.rows[e.cy].chars)
-					if e.cx < len(runes) {
-						e.cx++
-					} else if e.cy < len(e.rows)-1 {
-						e.cy++
-						e.cx = 0
-					}
-				}
-				return nil
-			case 'D': // 左矢印
-				if e.cx > 0 {
-					e.cx--
-				} else if e.cy > 0 {
-					e.cy--
-					runes := []rune(e.rows[e.cy].chars)
-					e.cx = len(runes)
-				}
-				return nil
-			}
-		}
-		return nil
+	switch event.Type {
+	case KeyEventSpecial:
+		return e.handleSpecialKey(event.Key)
+	case KeyEventControl:
+		return e.handleControlKey(event.Key)
+	case KeyEventChar:
+		e.insertChar(event.Rune)
 	}
 
-	// バックスペースの処理
-	if n == 1 && buf[0] == 127 {
+	return nil
+}
+
+// handleSpecialKey は特殊キーの処理を行う
+func (e *Editor) handleSpecialKey(key Key) error {
+	switch key {
+	case KeyArrowUp:
+		if e.cy > 0 {
+			e.cy--
+			e.adjustCursorX()
+		}
+	case KeyArrowDown:
+		if e.cy < len(e.rows)-1 {
+			e.cy++
+			e.adjustCursorX()
+		}
+	case KeyArrowRight:
+		if e.cy < len(e.rows) {
+			runes := []rune(e.rows[e.cy].chars)
+			if e.cx < len(runes) {
+				e.cx++
+			} else if e.cy < len(e.rows)-1 {
+				e.cy++
+				e.cx = 0
+			}
+		}
+	case KeyArrowLeft:
+		if e.cx > 0 {
+			e.cx--
+		} else if e.cy > 0 {
+			e.cy--
+			runes := []rune(e.rows[e.cy].chars)
+			e.cx = len(runes)
+		}
+	case KeyBackspace:
 		e.deleteChar()
-		return nil
+	case KeyEnter:
+		e.insertNewline()
 	}
+	return nil
+}
 
-	// 他の制御文字の処理
-	if n == 1 {
-		switch buf[0] {
-		case 'q' & 0x1f, 'c' & 0x1f: // Ctrl-Q または Ctrl-C
-			if e.dirty {
-				e.setStatusMessage("Warning! File has unsaved changes. Press Ctrl-Q or Ctrl-C again to quit.")
-				e.dirty = false
-				return nil
-			}
-			close(e.quit)
-			return nil
-		case 's' & 0x1f: // Ctrl-S
-			if err := e.SaveFile(); err != nil {
-				e.setStatusMessage("Can't save! I/O error: %s", err)
-			}
-			return nil
-		case '\r':
-			e.insertNewline()
+// handleControlKey は制御キーの処理を行う
+func (e *Editor) handleControlKey(key Key) error {
+	switch key {
+	case KeyCtrlQ, KeyCtrlC:
+		if e.dirty {
+			e.setStatusMessage("Warning! File has unsaved changes. Press Ctrl-Q or Ctrl-C again to quit.")
+			e.dirty = false
 			return nil
 		}
-	}
-
-	// 通常の文字入力処理
-	// UTF-8のマルチバイト文字を適切に処理
-	data := buf[:n]
-	for len(data) > 0 {
-		r, size := utf8.DecodeRune(data)
-		if r != utf8.RuneError {
-			e.insertChar(r)
+		close(e.quit)
+	case KeyCtrlS:
+		if err := e.SaveFile(); err != nil {
+			e.setStatusMessage("Can't save! I/O error: %s", err)
 		}
-		data = data[size:]
 	}
-
 	return nil
 }
 
@@ -499,4 +470,22 @@ func (e *Editor) SaveFile() error {
 func (e *Editor) setStatusMessage(format string, args ...interface{}) {
 	e.message = fmt.Sprintf(format, args...)
 	e.messageTime = time.Now()
+}
+
+// SetKeyReader はキー入力読み取りインターフェースを設定する
+func (e *Editor) SetKeyReader(reader KeyReader) {
+	e.keyReader = reader
+}
+
+// GetContent は指定された行の内容を返す
+func (e *Editor) GetContent(lineNum int) string {
+	if lineNum >= 0 && lineNum < len(e.rows) {
+		return e.rows[lineNum].chars
+	}
+	return ""
+}
+
+// GetLineCount は行数を返す
+func (e *Editor) GetLineCount() int {
+	return len(e.rows)
 }

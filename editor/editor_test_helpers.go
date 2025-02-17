@@ -211,3 +211,32 @@ func (ms *MockStorage) Save(filename string, content []string) error {
 func (ms *MockStorage) GetSavedContent(filename string) []string {
 	return ms.files[filename]
 }
+
+// MockKeyReader はテスト用のキー入力シミュレータ
+type MockKeyReader struct {
+	events []KeyEvent
+	index  int
+}
+
+// NewMockKeyReader は一連のキーイベントをシミュレートするMockKeyReaderを作成する
+func NewMockKeyReader(events []KeyEvent) *MockKeyReader {
+	return &MockKeyReader{
+		events: events,
+		index:  0,
+	}
+}
+
+// ReadKey は事前に設定されたキーイベントを順番に返す
+func (m *MockKeyReader) ReadKey() (KeyEvent, error) {
+	if m.index >= len(m.events) {
+		return KeyEvent{}, nil
+	}
+	event := m.events[m.index]
+	m.index++
+	return event, nil
+}
+
+// ResetIndex はイベントインデックスをリセットする
+func (m *MockKeyReader) ResetIndex() {
+	m.index = 0
+}

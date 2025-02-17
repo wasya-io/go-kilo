@@ -230,3 +230,49 @@ func TestDelete(t *testing.T) {
 		t.Errorf("カーソル位置が正しくありません: got (%d,%d), want (2,0)", x, y)
 	}
 }
+
+func TestEditorKeyInput(t *testing.T) {
+	// テストケース用のキーイベントを準備
+	events := []editor.KeyEvent{
+		{Type: editor.KeyEventChar, Rune: 'H'},
+		{Type: editor.KeyEventChar, Rune: 'i'},
+		{Type: editor.KeyEventSpecial, Key: editor.KeyEnter},
+		{Type: editor.KeyEventChar, Rune: '!'},
+	}
+
+	// MockKeyReaderを使用してエディタを初期化
+	e, err := editor.New(true) // テストモードで初期化
+	if err != nil {
+		t.Fatalf("Failed to create editor: %v", err)
+	}
+	mockReader := editor.NewMockKeyReader(events)
+	e.SetKeyReader(mockReader)
+
+	// キー入力をシミュレート
+	for i := 0; i < len(events); i++ {
+		err := e.ProcessKeypress()
+		if err != nil {
+			t.Errorf("Failed to process keypress: %v", err)
+		}
+	}
+
+	// 期待される結果を検証
+	expectedLines := []string{
+		"Hi",
+		"!",
+	}
+
+	lineCount := e.GetLineCount()
+	if lineCount != len(expectedLines) {
+		t.Errorf("Expected %d lines, got %d", len(expectedLines), lineCount)
+	}
+
+	for i, expected := range expectedLines {
+		if i >= lineCount {
+			break
+		}
+		if content := e.GetContent(i); content != expected {
+			t.Errorf("Line %d: expected '%s', got '%s'", i, expected, content)
+		}
+	}
+}
