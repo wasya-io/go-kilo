@@ -167,52 +167,6 @@ func getCharWidth(ch rune) int {
 	}
 }
 
-// 文字列の表示幅を計算する
-func getStringWidth(s string) int {
-	width := 0
-	for _, ch := range s {
-		width += getCharWidth(ch)
-	}
-	return width
-}
-
-// スクリーン上の位置から文字列内のバイト位置を取得
-func getOffsetFromScreenPos(s string, screenPos int) int {
-	currentWidth := 0
-	currentOffset := 0
-
-	for currentOffset < len(s) {
-		r, size := utf8.DecodeRuneInString(s[currentOffset:])
-		if r == utf8.RuneError {
-			return currentOffset
-		}
-
-		charWidth := getCharWidth(r)
-		if currentWidth+charWidth > screenPos {
-			break
-		}
-
-		currentWidth += charWidth
-		currentOffset += size
-	}
-
-	return currentOffset
-}
-
-// 文字列内のバイト位置からスクリーン上の位置を取得
-func getScreenPosFromOffset(s string, offset int) int {
-	width := 0
-	for i := 0; i < offset; {
-		r, size := utf8.DecodeRuneInString(s[i:])
-		if r == utf8.RuneError {
-			break
-		}
-		width += getCharWidth(r)
-		i += size
-	}
-	return width
-}
-
 // scroll は必要に応じてスクロール位置を更新する
 func (e *Editor) scroll() {
 	// 垂直スクロール
