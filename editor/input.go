@@ -159,3 +159,78 @@ func (kr *StandardKeyReader) handleEscapeSequence(buf []byte) (KeyEvent, error) 
 
 	return KeyEvent{}, nil
 }
+
+// InputHandler はキー入力とその処理を管理する
+type InputHandler struct {
+	keyReader KeyReader
+	editor    *Editor
+}
+
+// NewInputHandler は新しいInputHandlerを作成する
+func NewInputHandler(editor *Editor) *InputHandler {
+	return &InputHandler{
+		keyReader: NewStandardKeyReader(),
+		editor:    editor,
+	}
+}
+
+// ProcessKeypress はキー入力を処理する
+func (ih *InputHandler) ProcessKeypress() error {
+	event, err := ih.keyReader.ReadKey()
+	if err != nil {
+		return err
+	}
+
+	switch event.Type {
+	case KeyEventSpecial:
+		return ih.handleSpecialKey(event.Key)
+	case KeyEventControl:
+		return ih.handleControlKey(event.Key)
+	case KeyEventChar:
+		ih.editor.buffer.InsertChar(event.Rune)
+	}
+
+	return nil
+}
+
+// handleSpecialKey は特殊キーの処理を行う
+func (ih *InputHandler) handleSpecialKey(key Key) error {
+	switch key {
+	case KeyArrowUp:
+		ih.editor.buffer.MoveCursor(CursorUp)
+	case KeyArrowDown:
+		ih.editor.buffer.MoveCursor(CursorDown)
+	case KeyArrowRight:
+		ih.editor.buffer.MoveCursor(CursorRight)
+	case KeyArrowLeft:
+		ih.editor.buffer.MoveCursor(CursorLeft)
+	case KeyBackspace:
+		ih.editor.buffer.DeleteChar()
+	case KeyEnter:
+		ih.editor.buffer.InsertNewline()
+	}
+	return nil
+}
+
+// handleControlKey は制御キーの処理を行う
+func (ih *InputHandler) handleControlKey(key Key) error {
+	switch key {
+	case KeyCtrlQ, KeyCtrlC:
+		if ih.editor.buffer.IsDirty() {
+			ih.editor.setStatusMessage("Warning! File has unsaved changes. Press Ctrl-Q or Ctrl-C again to quit.")
+			ih.editor.buffer.SetDirty(false)
+			return nil
+		}
+		ih.editor.Quit()
+	case KeyCtrlS:
+		if err := ih.editor.SaveFile(); err != nil {
+			ih.editor.setStatusMessage("Can't save! I/O error: %s", err)
+		}
+	}
+	return nil
+}
+
+// SetKeyReader はキー入力読み取りインターフェースを設定する
+func (ih *InputHandler) SetKeyReader(reader KeyReader) {
+	ih.keyReader = reader
+}

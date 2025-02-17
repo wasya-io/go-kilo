@@ -2,6 +2,177 @@ package editor
 
 import "golang.org/x/text/width"
 
+// Buffer はテキストバッファ全体を管理する
+type Buffer struct {
+	rows   []*Row
+	cx, cy int
+	dirty  bool
+}
+
+// NewBuffer は新しいBufferを作成する
+func NewBuffer() *Buffer {
+	return &Buffer{
+		rows: make([]*Row, 0),
+		cx:   0,
+		cy:   0,
+	}
+}
+
+// InsertChar は現在のカーソル位置に文字を挿入する
+func (b *Buffer) InsertChar(ch rune) {
+	if b.cy == len(b.rows) {
+		b.rows = append(b.rows, NewRow(""))
+	}
+
+	row := b.rows[b.cy]
+	row.InsertChar(b.cx, ch)
+	b.cx++
+	b.dirty = true
+}
+
+// DeleteChar はカーソル位置の前の文字を削除する
+func (b *Buffer) DeleteChar() {
+	if b.cy == len(b.rows) {
+		return
+	}
+	if b.cx == 0 && b.cy == 0 {
+		return
+	}
+
+	row := b.rows[b.cy]
+	if b.cx > 0 {
+		row.DeleteChar(b.cx - 1)
+		b.cx--
+	} else {
+		if b.cy > 0 {
+			prevRow := b.rows[b.cy-1]
+			b.cx = prevRow.GetRuneCount()
+			prevRow.Append(row.GetContent())
+			b.rows = append(b.rows[:b.cy], b.rows[b.cy+1:]...)
+			b.cy--
+		}
+	}
+	b.dirty = true
+}
+
+// InsertNewline は現在のカーソル位置で改行を挿入する
+func (b *Buffer) InsertNewline() {
+	if b.cx == 0 {
+		b.rows = append(b.rows[:b.cy], append([]*Row{NewRow("")}, b.rows[b.cy:]...)...)
+	} else {
+		row := b.rows[b.cy]
+		content := row.GetContent()
+		runes := []rune(content)
+		newRow := NewRow(string(runes[b.cx:]))
+		row.chars = string(runes[:b.cx])
+		row.updateWidths()
+		b.rows = append(b.rows[:b.cy+1], append([]*Row{newRow}, b.rows[b.cy+1:]...)...)
+	}
+	b.cy++
+	b.cx = 0
+	b.dirty = true
+}
+
+// MoveCursor はカーソルを移動する
+func (b *Buffer) MoveCursor(direction CursorMovement) {
+	switch direction {
+	case CursorUp:
+		if b.cy > 0 {
+			currentRow := b.rows[b.cy]
+			targetScreenPos := currentRow.OffsetToScreenPosition(b.cx)
+			b.cy--
+			newRow := b.rows[b.cy]
+			b.cx = newRow.ScreenPositionToOffset(targetScreenPos)
+		}
+	case CursorDown:
+		if b.cy < len(b.rows)-1 {
+			currentRow := b.rows[b.cy]
+			targetScreenPos := currentRow.OffsetToScreenPosition(b.cx)
+			b.cy++
+			newRow := b.rows[b.cy]
+			b.cx = newRow.ScreenPositionToOffset(targetScreenPos)
+		}
+	case CursorRight:
+		if b.cy < len(b.rows) {
+			runes := []rune(b.rows[b.cy].GetContent())
+			if b.cx < len(runes) {
+				b.cx++
+			} else if b.cy < len(b.rows)-1 {
+				b.cy++
+				b.cx = 0
+			}
+		}
+	case CursorLeft:
+		if b.cx > 0 {
+			b.cx--
+		} else if b.cy > 0 {
+			b.cy--
+			runes := []rune(b.rows[b.cy].GetContent())
+			b.cx = len(runes)
+		}
+	}
+}
+
+// GetCursor はカーソル位置を返す
+func (b *Buffer) GetCursor() (int, int) {
+	return b.cx, b.cy
+}
+
+// SetCursor はカーソル位置を設定する
+func (b *Buffer) SetCursor(x, y int) {
+	if y >= 0 && y < len(b.rows) {
+		b.cy = y
+		runes := []rune(b.rows[y].GetContent())
+		if x >= 0 {
+			if x > len(runes) {
+				x = len(runes)
+			}
+			b.cx = x
+		}
+	}
+}
+
+// GetContent は指定された行の内容を返す
+func (b *Buffer) GetContent(lineNum int) string {
+	if lineNum >= 0 && lineNum < len(b.rows) {
+		return b.rows[lineNum].GetContent()
+	}
+	return ""
+}
+
+// GetLineCount は行数を返す
+func (b *Buffer) GetLineCount() int {
+	return len(b.rows)
+}
+
+// IsDirty は未保存の変更があるかどうかを返す
+func (b *Buffer) IsDirty() bool {
+	return b.dirty
+}
+
+// SetDirty は未保存の変更状態を設定する
+func (b *Buffer) SetDirty(dirty bool) {
+	b.dirty = dirty
+}
+
+// LoadContent はバッファの内容を設定する
+func (b *Buffer) LoadContent(lines []string) {
+	b.rows = make([]*Row, len(lines))
+	for i, line := range lines {
+		b.rows[i] = NewRow(line)
+	}
+	b.dirty = false
+}
+
+// GetContent は全行の内容を文字列のスライスとして返す
+func (b *Buffer) GetAllContent() []string {
+	content := make([]string, len(b.rows))
+	for i, row := range b.rows {
+		content[i] = row.GetContent()
+	}
+	return content
+}
+
 // Row は1行のテキストデータと関連情報を保持する
 type Row struct {
 	chars     string // 実際の文字列データ

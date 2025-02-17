@@ -18,71 +18,32 @@ const (
 // GetRows は行のコンテンツを文字列のスライスとして返す
 // テスト用に実装
 func (e *Editor) GetRows() []string {
-	result := make([]string, len(e.rows))
-	for i, row := range e.rows {
-		result[i] = row.GetContent()
-	}
-	return result
+	return e.buffer.GetAllContent()
 }
 
 // TestInput はテスト用に1文字入力をシミュレートする
 func (e *Editor) TestInput(r rune) error {
-	e.insertChar(r)
+	e.buffer.InsertChar(r)
 	return nil
 }
 
 // TestSetCursor はテスト用にカーソル位置を設定する
 func (e *Editor) TestSetCursor(x, y int) error {
-	if y >= len(e.rows) {
+	if y >= e.buffer.GetLineCount() {
 		return fmt.Errorf("invalid y position: %d", y)
 	}
-	if y >= 0 && x >= 0 {
-		e.cy = y
-		runes := []rune(e.rows[y].GetContent())
-		if x > len(runes) {
-			x = len(runes)
-		}
-		e.cx = x
-	}
+	e.buffer.SetCursor(x, y)
 	return nil
 }
 
 // TestGetCursor はテスト用にカーソル位置を取得する
 func (e *Editor) TestGetCursor() (x, y int) {
-	return e.cx, e.cy
+	return e.buffer.GetCursor()
 }
 
 // TestMoveCursor はテスト用にカーソルを移動する
 func (e *Editor) TestMoveCursor(m CursorMovement) error {
-	switch m {
-	case CursorUp:
-		if e.cy > 0 {
-			currentRow := e.rows[e.cy]
-			targetScreenPos := currentRow.OffsetToScreenPosition(e.cx)
-			e.cy--
-			newRow := e.rows[e.cy]
-			e.cx = newRow.ScreenPositionToOffset(targetScreenPos)
-		}
-	case CursorDown:
-		if e.cy < len(e.rows)-1 {
-			currentRow := e.rows[e.cy]
-			targetScreenPos := currentRow.OffsetToScreenPosition(e.cx)
-			e.cy++
-			newRow := e.rows[e.cy]
-			e.cx = newRow.ScreenPositionToOffset(targetScreenPos)
-		}
-	case CursorRight:
-		if e.cy < len(e.rows) {
-			runes := []rune(e.rows[e.cy].GetContent())
-			if e.cx < len(runes) {
-				e.cx++
-			}
-		}
-	case CursorLeft:
-		if e.cx > 0 {
-			e.cx--
-		}
-	}
+	e.buffer.MoveCursor(m)
 	return nil
 }
 
@@ -96,53 +57,33 @@ func (e *Editor) TestProcessInput(input []byte) error {
 	if len(input) >= 3 && input[0] == '\x1b' && input[1] == '[' {
 		switch input[2] {
 		case 'A': // 上矢印
-			if e.cy > 0 {
-				e.cy--
-				e.updateCursorPosition()
-			}
+			e.buffer.MoveCursor(CursorUp)
 		case 'B': // 下矢印
-			if e.cy < len(e.rows)-1 {
-				e.cy++
-				e.updateCursorPosition()
-			}
+			e.buffer.MoveCursor(CursorDown)
 		case 'C': // 右矢印
-			if e.cy < len(e.rows) {
-				runes := []rune(e.rows[e.cy].GetContent())
-				if e.cx < len(runes) {
-					e.cx++
-				} else if e.cy < len(e.rows)-1 {
-					e.cy++
-					e.cx = 0
-				}
-			}
+			e.buffer.MoveCursor(CursorRight)
 		case 'D': // 左矢印
-			if e.cx > 0 {
-				e.cx--
-			} else if e.cy > 0 {
-				e.cy--
-				runes := []rune(e.rows[e.cy].GetContent())
-				e.cx = len(runes)
-			}
+			e.buffer.MoveCursor(CursorLeft)
 		}
 		return nil
 	}
 
 	// バックスペースの処理
 	if len(input) == 1 && input[0] == 127 {
-		e.deleteChar()
+		e.buffer.DeleteChar()
 		return nil
 	}
 
 	// 通常の文字入力処理
 	if len(input) == 1 {
 		if !isControl(input[0]) {
-			e.insertChar(rune(input[0]))
+			e.buffer.InsertChar(rune(input[0]))
 		}
 	} else {
 		// マルチバイト文字の処理
 		r, _ := utf8.DecodeRune(input)
 		if r != utf8.RuneError {
-			e.insertChar(r)
+			e.buffer.InsertChar(r)
 		}
 	}
 
@@ -151,56 +92,30 @@ func (e *Editor) TestProcessInput(input []byte) error {
 
 // TestDelete はテスト用にバックスペースを実行する
 func (e *Editor) TestDelete() error {
-	e.deleteChar()
+	e.buffer.DeleteChar()
 	return nil
 }
 
 // SetRowsForTest はテスト用に行データを直接設定する
 func (e *Editor) SetRowsForTest(rows []*Row) {
-	e.rows = rows
-}
-
-// updateCursorPosition はカーソル位置を適切な範囲に調整する
-func (e *Editor) updateCursorPosition() {
-	if e.cy < len(e.rows) {
-		runes := []rune(e.rows[e.cy].GetContent())
-		if e.cx > len(runes) {
-			e.cx = len(runes)
-		}
+	content := make([]string, len(rows))
+	for i, row := range rows {
+		content[i] = row.GetContent()
 	}
+	e.buffer.LoadContent(content)
 }
 
 // TestMoveCursorByByte はテスト用にカーソルを移動する
 func (e *Editor) TestMoveCursorByByte(direction byte) error {
 	switch direction {
 	case 'A': // Up
-		if e.cy > 0 {
-			e.cy--
-			e.updateCursorPosition()
-		}
+		e.buffer.MoveCursor(CursorUp)
 	case 'B': // Down
-		if e.cy < len(e.rows)-1 {
-			e.cy++
-			e.updateCursorPosition()
-		}
+		e.buffer.MoveCursor(CursorDown)
 	case 'C': // Right
-		if e.cy < len(e.rows) {
-			runes := []rune(e.rows[e.cy].GetContent())
-			if e.cx < len(runes) {
-				e.cx++
-			} else if e.cy < len(e.rows)-1 {
-				e.cy++
-				e.cx = 0
-			}
-		}
+		e.buffer.MoveCursor(CursorRight)
 	case 'D': // Left
-		if e.cx > 0 {
-			e.cx--
-		} else if e.cy > 0 {
-			e.cy--
-			runes := []rune(e.rows[e.cy].GetContent())
-			e.cx = len(runes)
-		}
+		e.buffer.MoveCursor(CursorLeft)
 	default:
 		return fmt.Errorf("unknown direction: %c", direction)
 	}

@@ -11,14 +11,12 @@ type Editor struct {
 	term      *terminalState
 	ui        *UI
 	quit      chan struct{}
-	rows      []*Row
-	cx, cy    int
+	buffer    *Buffer
 	rowOffset int
 	colOffset int
 	filename  string
-	dirty     bool
 	storage   Storage
-	keyReader KeyReader
+	input     *InputHandler
 }
 
 // New は新しいEditorインスタンスを作成する
@@ -40,21 +38,22 @@ func New(testMode bool) (*Editor, error) {
 	e := &Editor{
 		ui:        NewUI(screenRows, screenCols),
 		quit:      make(chan struct{}),
-		rows:      make([]*Row, 0),
-		cx:        0,
-		cy:        0,
+		buffer:    NewBuffer(),
 		rowOffset: 0,
 		colOffset: 0,
-		dirty:     false,
 		storage:   NewFileStorage(),
-		keyReader: NewStandardKeyReader(),
 	}
+
+	e.input = NewInputHandler(e)
 
 	if !testMode {
 		// テスト以外の場合のみデフォルトテキストを追加
-		e.rows = append(e.rows, NewRow("Hello, Go-Kilo editor!"))
-		e.rows = append(e.rows, NewRow("Use arrow keys to move cursor."))
-		e.rows = append(e.rows, NewRow("Press Ctrl-Q or Ctrl-C to quit."))
+		defaultContent := []string{
+			"Hello, Go-Kilo editor!",
+			"Use arrow keys to move cursor.",
+			"Press Ctrl-Q or Ctrl-C to quit.",
+		}
+		e.buffer.LoadContent(defaultContent)
 
 		// Rawモードを有効化
 		term, err := enableRawMode()
@@ -78,18 +77,23 @@ func (e *Editor) Cleanup() {
 
 // scroll は必要に応じてスクロール位置を更新する
 func (e *Editor) scroll() {
+	cx, cy := e.buffer.GetCursor()
+
 	// 垂直スクロール
-	if e.cy < e.rowOffset {
-		e.rowOffset = e.cy
+	if cy < e.rowOffset {
+		e.rowOffset = cy
 	}
-	if e.cy >= e.rowOffset+e.ui.screenRows-2 {
-		e.rowOffset = e.cy - (e.ui.screenRows - 3)
+	if cy >= e.rowOffset+e.ui.screenRows-2 {
+		e.rowOffset = cy - (e.ui.screenRows - 3)
 	}
 
 	// 水平スクロール
 	screenX := 0
-	if e.cy < len(e.rows) {
-		screenX = e.rows[e.cy].OffsetToScreenPosition(e.cx)
+	if cy < e.buffer.GetLineCount() {
+		row := e.buffer.GetContent(cy)
+		if len(row) > 0 {
+			screenX = len([]rune(row[:cx]))
+		}
 	}
 
 	if screenX < e.colOffset {
@@ -103,91 +107,25 @@ func (e *Editor) scroll() {
 // RefreshScreen は画面を更新する
 func (e *Editor) RefreshScreen() error {
 	e.scroll()
-	output := e.ui.RenderScreen(e.rows, e.filename, e.dirty, e.cx, e.cy, e.rowOffset, e.colOffset)
+	lines := make([]*Row, e.buffer.GetLineCount())
+	for i := 0; i < e.buffer.GetLineCount(); i++ {
+		content := e.buffer.GetContent(i)
+		lines[i] = NewRow(content)
+	}
+	cx, cy := e.buffer.GetCursor()
+	output := e.ui.RenderScreen(lines, e.filename, e.buffer.IsDirty(), cx, cy, e.rowOffset, e.colOffset)
 	_, err := os.Stdout.WriteString(output)
 	return err
 }
 
 // ProcessKeypress はキー入力を処理する
 func (e *Editor) ProcessKeypress() error {
-	event, err := e.keyReader.ReadKey()
-	if err != nil {
-		return err
-	}
-
-	switch event.Type {
-	case KeyEventSpecial:
-		return e.handleSpecialKey(event.Key)
-	case KeyEventControl:
-		return e.handleControlKey(event.Key)
-	case KeyEventChar:
-		e.insertChar(event.Rune)
-	}
-
-	return nil
+	return e.input.ProcessKeypress()
 }
 
-// handleSpecialKey は特殊キーの処理を行う
-func (e *Editor) handleSpecialKey(key Key) error {
-	switch key {
-	case KeyArrowUp:
-		if e.cy > 0 {
-			currentRow := e.rows[e.cy]
-			targetScreenPos := currentRow.OffsetToScreenPosition(e.cx)
-			e.cy--
-			newRow := e.rows[e.cy]
-			e.cx = newRow.ScreenPositionToOffset(targetScreenPos)
-		}
-	case KeyArrowDown:
-		if e.cy < len(e.rows)-1 {
-			currentRow := e.rows[e.cy]
-			targetScreenPos := currentRow.OffsetToScreenPosition(e.cx)
-			e.cy++
-			newRow := e.rows[e.cy]
-			e.cx = newRow.ScreenPositionToOffset(targetScreenPos)
-		}
-	case KeyArrowRight:
-		if e.cy < len(e.rows) {
-			runes := []rune(e.rows[e.cy].GetContent())
-			if e.cx < len(runes) {
-				e.cx++
-			} else if e.cy < len(e.rows)-1 {
-				e.cy++
-				e.cx = 0
-			}
-		}
-	case KeyArrowLeft:
-		if e.cx > 0 {
-			e.cx--
-		} else if e.cy > 0 {
-			e.cy--
-			runes := []rune(e.rows[e.cy].GetContent())
-			e.cx = len(runes)
-		}
-	case KeyBackspace:
-		e.deleteChar()
-	case KeyEnter:
-		e.insertNewline()
-	}
-	return nil
-}
-
-// handleControlKey は制御キーの処理を行う
-func (e *Editor) handleControlKey(key Key) error {
-	switch key {
-	case KeyCtrlQ, KeyCtrlC:
-		if e.dirty {
-			e.setStatusMessage("Warning! File has unsaved changes. Press Ctrl-Q or Ctrl-C again to quit.")
-			e.dirty = false
-			return nil
-		}
-		close(e.quit)
-	case KeyCtrlS:
-		if err := e.SaveFile(); err != nil {
-			e.setStatusMessage("Can't save! I/O error: %s", err)
-		}
-	}
-	return nil
+// SetKeyReader はキー入力読み取りインターフェースを設定する
+func (e *Editor) SetKeyReader(reader KeyReader) {
+	e.input.SetKeyReader(reader)
 }
 
 // QuitChan は終了シグナルを監視するためのチャネルを返す
@@ -200,61 +138,6 @@ func (e *Editor) Quit() {
 	close(e.quit)
 }
 
-// insertChar は現在のカーソル位置に文字を挿入する
-func (e *Editor) insertChar(ch rune) {
-	if e.cy == len(e.rows) {
-		e.rows = append(e.rows, NewRow(""))
-	}
-
-	row := e.rows[e.cy]
-	row.InsertChar(e.cx, ch)
-	e.cx++
-	e.dirty = true
-}
-
-// deleteChar はカーソル位置の前の文字を削除する
-func (e *Editor) deleteChar() {
-	if e.cy == len(e.rows) {
-		return
-	}
-	if e.cx == 0 && e.cy == 0 {
-		return
-	}
-
-	row := e.rows[e.cy]
-	if e.cx > 0 {
-		row.DeleteChar(e.cx - 1)
-		e.cx--
-	} else {
-		if e.cy > 0 {
-			prevRow := e.rows[e.cy-1]
-			e.cx = prevRow.GetRuneCount()
-			prevRow.Append(row.GetContent())
-			e.rows = append(e.rows[:e.cy], e.rows[e.cy+1:]...)
-			e.cy--
-		}
-	}
-	e.dirty = true
-}
-
-// insertNewline は現在のカーソル位置で改行を挿入する
-func (e *Editor) insertNewline() {
-	if e.cx == 0 {
-		e.rows = append(e.rows[:e.cy], append([]*Row{NewRow("")}, e.rows[e.cy:]...)...)
-	} else {
-		row := e.rows[e.cy]
-		content := row.GetContent()
-		runes := []rune(content)
-		newRow := NewRow(string(runes[e.cx:]))
-		row.chars = string(runes[:e.cx])
-		row.updateWidths()
-		e.rows = append(e.rows[:e.cy+1], append([]*Row{newRow}, e.rows[e.cy+1:]...)...)
-	}
-	e.cy++
-	e.cx = 0
-	e.dirty = true
-}
-
 // OpenFile は指定されたファイルを読み込む
 func (e *Editor) OpenFile(filename string) error {
 	e.filename = filename
@@ -264,12 +147,7 @@ func (e *Editor) OpenFile(filename string) error {
 		return err
 	}
 
-	e.rows = make([]*Row, len(lines))
-	for i, line := range lines {
-		e.rows[i] = NewRow(line)
-	}
-
-	e.dirty = false
+	e.buffer.LoadContent(lines)
 	e.setStatusMessage("File loaded")
 	return nil
 }
@@ -281,17 +159,13 @@ func (e *Editor) SaveFile() error {
 		return nil
 	}
 
-	content := make([]string, len(e.rows))
-	for i, row := range e.rows {
-		content[i] = row.GetContent()
-	}
-
+	content := e.buffer.GetAllContent()
 	err := e.storage.Save(e.filename, content)
 	if err != nil {
 		return err
 	}
 
-	e.dirty = false
+	e.buffer.SetDirty(false)
 	e.setStatusMessage("File saved")
 	return nil
 }
@@ -301,33 +175,24 @@ func (e *Editor) setStatusMessage(format string, args ...interface{}) {
 	e.ui.SetMessage(format, args...)
 }
 
-// SetKeyReader はキー入力読み取りインターフェースを設定する
-func (e *Editor) SetKeyReader(reader KeyReader) {
-	e.keyReader = reader
-}
-
 // GetCharAtCursor は現在のカーソル位置の文字を返す
 func (e *Editor) GetCharAtCursor() string {
-	if e.cy >= len(e.rows) {
-		return ""
-	}
-	row := e.rows[e.cy]
-	runes := []rune(row.GetContent())
-	if e.cx >= len(runes) {
-		return ""
-	}
-	return string(runes[e.cx])
-}
-
-// GetContent は指定された行の内容を返す
-func (e *Editor) GetContent(lineNum int) string {
-	if lineNum >= 0 && lineNum < len(e.rows) {
-		return e.rows[lineNum].GetContent()
+	cx, cy := e.buffer.GetCursor()
+	if content := e.buffer.GetContent(cy); content != "" {
+		runes := []rune(content)
+		if cx < len(runes) {
+			return string(runes[cx])
+		}
 	}
 	return ""
 }
 
+// GetContent は指定された行の内容を返す
+func (e *Editor) GetContent(lineNum int) string {
+	return e.buffer.GetContent(lineNum)
+}
+
 // GetLineCount は行数を返す
 func (e *Editor) GetLineCount() int {
-	return len(e.rows)
+	return e.buffer.GetLineCount()
 }
