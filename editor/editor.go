@@ -293,13 +293,29 @@ func (e *Editor) handleSpecialKey(key Key) error {
 	switch key {
 	case KeyArrowUp:
 		if e.cy > 0 {
+			// 現在位置のスクリーンポジションを取得
+			currentRow := e.rows[e.cy]
+			targetScreenPos := currentRow.offsetToScreenPosition(e.cx)
+
+			// 上の行に移動
 			e.cy--
-			e.adjustCursorX()
+
+			// 新しい行での対応する位置を設定
+			newRow := e.rows[e.cy]
+			e.cx = newRow.screenPositionToOffset(targetScreenPos)
 		}
 	case KeyArrowDown:
 		if e.cy < len(e.rows)-1 {
+			// 現在位置のスクリーンポジションを取得
+			currentRow := e.rows[e.cy]
+			targetScreenPos := currentRow.offsetToScreenPosition(e.cx)
+
+			// 下の行に移動
 			e.cy++
-			e.adjustCursorX()
+
+			// 新しい行での対応する位置を設定
+			newRow := e.rows[e.cy]
+			e.cx = newRow.screenPositionToOffset(targetScreenPos)
 		}
 	case KeyArrowRight:
 		if e.cy < len(e.rows) {
@@ -355,12 +371,21 @@ func (e *Editor) Quit() {
 	close(e.quit)
 }
 
-// adjustCursorX はカーソルのX座標を現在の行の長さに合わせて調整する
+// adjustCursorX はカーソルのX座標を現在の行の長さと前の行の相対位置に合わせて調整する
 func (e *Editor) adjustCursorX() {
 	if e.cy < len(e.rows) {
-		runes := []rune(e.rows[e.cy].chars)
+		currentRow := e.rows[e.cy]
+		runes := []rune(currentRow.chars)
+
 		if e.cx > len(runes) {
-			e.cx = len(runes)
+			// 現在の行が短い場合は、前の行でのカーソルの相対位置（表示幅）を考慮して位置を決定
+			if e.cy > 0 && e.cx < len([]rune(e.rows[e.cy-1].chars)) {
+				prevRow := e.rows[e.cy-1]
+				targetScreenPos := prevRow.offsetToScreenPosition(e.cx)
+				e.cx = currentRow.screenPositionToOffset(targetScreenPos)
+			} else {
+				e.cx = len(runes)
+			}
 		}
 	}
 }
@@ -475,6 +500,20 @@ func (e *Editor) setStatusMessage(format string, args ...interface{}) {
 // SetKeyReader はキー入力読み取りインターフェースを設定する
 func (e *Editor) SetKeyReader(reader KeyReader) {
 	e.keyReader = reader
+}
+
+// GetCharAtCursor は現在のカーソル位置の文字を返す
+// カーソルが有効な位置にない場合は空文字を返す
+func (e *Editor) GetCharAtCursor() string {
+	if e.cy >= len(e.rows) {
+		return ""
+	}
+	row := e.rows[e.cy]
+	runes := []rune(row.chars)
+	if e.cx >= len(runes) {
+		return ""
+	}
+	return string(runes[e.cx])
 }
 
 // GetContent は指定された行の内容を返す

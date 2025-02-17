@@ -137,6 +137,96 @@ func TestCursorMovement(t *testing.T) {
 	}
 }
 
+// TestCursorMovementWithMultibyte はマルチバイト文字を含む行間のカーソル移動をテストする
+func TestCursorMovementWithMultibyte(t *testing.T) {
+	ed, err := editor.New(true)
+	if err != nil {
+		t.Fatalf("エディタの初期化に失敗しました: %v", err)
+	}
+	defer ed.Cleanup()
+
+	// 1行目：ASCII文字のみ（5文字）
+	// 2行目：全角文字（3文字）
+	// 3行目：ASCII文字のみ（5文字）
+	filename, cleanup := setupTestFile(t, "abcde\nあいう\nabcde")
+	defer cleanup()
+
+	if err := ed.OpenFile(filename); err != nil {
+		t.Fatalf("ファイルを開けませんでした: %v", err)
+	}
+
+	tests := []struct {
+		name     string
+		setup    func(*editor.Editor)
+		movement editor.CursorMovement
+		wantX    int
+		wantY    int
+		wantChar string
+	}{
+		{
+			name: "ASCIIの行から全角文字の行へ下移動",
+			setup: func(ed *editor.Editor) {
+				ed.TestSetCursor(2, 0) // "c"の位置
+			},
+			movement: editor.CursorDown,
+			wantX:    1, // "い"の位置
+			wantY:    1,
+			wantChar: "い",
+		},
+		{
+			name: "全角文字の行からASCIIの行へ下移動",
+			setup: func(ed *editor.Editor) {
+				ed.TestSetCursor(1, 1) // "い"の位置
+			},
+			movement: editor.CursorDown,
+			wantX:    2, // "c"の位置
+			wantY:    2,
+			wantChar: "c",
+		},
+		{
+			name: "ASCIIの行から全角文字の行へ上移動",
+			setup: func(ed *editor.Editor) {
+				ed.TestSetCursor(2, 2) // 最終行の"c"の位置
+			},
+			movement: editor.CursorUp,
+			wantX:    1, // "い"の位置
+			wantY:    1,
+			wantChar: "い",
+		},
+		{
+			name: "全角文字の行からASCIIの行へ上移動",
+			setup: func(ed *editor.Editor) {
+				ed.TestSetCursor(1, 1) // "い"の位置
+			},
+			movement: editor.CursorUp,
+			wantX:    2, // "c"の位置
+			wantY:    0,
+			wantChar: "c",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.setup(ed)
+
+			if err := ed.TestMoveCursor(tt.movement); err != nil {
+				t.Fatalf("カーソル移動に失敗しました: %v", err)
+			}
+
+			x, y := ed.TestGetCursor()
+			if x != tt.wantX || y != tt.wantY {
+				t.Errorf("カーソル位置が正しくありません: got (%d,%d), want (%d,%d)",
+					x, y, tt.wantX, tt.wantY)
+			}
+
+			got := ed.GetCharAtCursor()
+			if got != tt.wantChar {
+				t.Errorf("カーソル位置の文字が正しくありません: got %q, want %q", got, tt.wantChar)
+			}
+		})
+	}
+}
+
 // TestInput は文字入力をテストする
 func TestInput(t *testing.T) {
 	ed, err := editor.New(true)
@@ -275,4 +365,81 @@ func TestEditorKeyInput(t *testing.T) {
 			t.Errorf("Line %d: expected '%s', got '%s'", i, expected, content)
 		}
 	}
+}
+
+// TestGetCharAtCursor はカーソル位置の文字を取得する機能をテストする
+func TestGetCharAtCursor(t *testing.T) {
+	ed, err := editor.New(true)
+	if err != nil {
+		t.Fatalf("エディタの初期化に失敗しました: %v", err)
+	}
+	defer ed.Cleanup()
+
+	filename, cleanup := setupTestFile(t, "abc\nあいう")
+	defer cleanup()
+
+	if err := ed.OpenFile(filename); err != nil {
+		t.Fatalf("ファイルを開けませんでした: %v", err)
+	}
+
+	tests := []struct {
+		name     string
+		x        int
+		y        int
+		expected string
+	}{
+		{
+			name:     "ASCII文字",
+			x:        0,
+			y:        0,
+			expected: "a",
+		},
+		{
+			name:     "日本語文字",
+			x:        0,
+			y:        1,
+			expected: "あ",
+		},
+		{
+			name:     "行末",
+			x:        2,
+			y:        0,
+			expected: "c",
+		},
+		{
+			name:     "存在しない位置",
+			x:        10,
+			y:        0,
+			expected: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := ed.TestSetCursor(tt.x, tt.y); err != nil {
+				t.Fatalf("カーソル位置の設定に失敗しました: %v", err)
+			}
+
+			got := ed.GetCharAtCursor()
+			if got != tt.expected {
+				t.Errorf("GetCharAtCursor() = %q, want %q", got, tt.expected)
+			}
+		})
+	}
+
+	// 存在しない行のテストは別途実行
+	t.Run("存在しない行", func(t *testing.T) {
+		// 空のファイルを作成してテスト
+		emptyFile, cleanup := setupTestFile(t, "")
+		defer cleanup()
+
+		if err := ed.OpenFile(emptyFile); err != nil {
+			t.Fatalf("空ファイルを開けませんでした: %v", err)
+		}
+
+		got := ed.GetCharAtCursor()
+		if got != "" {
+			t.Errorf("GetCharAtCursor() = %q, want %q", got, "")
+		}
+	})
 }

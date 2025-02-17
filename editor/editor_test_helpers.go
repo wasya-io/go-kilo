@@ -57,13 +57,29 @@ func (e *Editor) TestMoveCursor(m CursorMovement) error {
 	switch m {
 	case CursorUp:
 		if e.cy > 0 {
+			// 現在位置のスクリーンポジションを取得
+			currentRow := e.rows[e.cy]
+			targetScreenPos := currentRow.offsetToScreenPosition(e.cx)
+
+			// 上の行に移動
 			e.cy--
-			e.adjustCursorX()
+
+			// 新しい行での対応する位置を設定
+			newRow := e.rows[e.cy]
+			e.cx = newRow.screenPositionToOffset(targetScreenPos)
 		}
 	case CursorDown:
 		if e.cy < len(e.rows)-1 {
+			// 現在位置のスクリーンポジションを取得
+			currentRow := e.rows[e.cy]
+			targetScreenPos := currentRow.offsetToScreenPosition(e.cx)
+
+			// 下の行に移動
 			e.cy++
-			e.adjustCursorX()
+
+			// 新しい行での対応する位置を設定
+			newRow := e.rows[e.cy]
+			e.cx = newRow.screenPositionToOffset(targetScreenPos)
 		}
 	case CursorRight:
 		if e.cy < len(e.rows) {
@@ -142,6 +158,11 @@ func (e *Editor) TestProcessInput(input []byte) error {
 func (e *Editor) TestDelete() error {
 	e.deleteChar()
 	return nil
+}
+
+// SetRowsForTest はテスト用に行データを直接設定する
+func (e *Editor) SetRowsForTest(rows []*Row) {
+	e.rows = rows
 }
 
 // TestMoveCursorByByte はテスト用にカーソルを移動する
