@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	"go-kilo/editor"
+	"github.com/wasya-io/go-kilo/editor"
 )
 
 // テスト用のファイルを準備する
