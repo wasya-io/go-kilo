@@ -180,3 +180,34 @@ func (e *Editor) TestMoveCursorByByte(direction byte) error {
 	}
 	return nil
 }
+
+// MockStorage はテスト用のストレージモックです
+type MockStorage struct {
+	files map[string][]string
+}
+
+// NewMockStorage は新しいモックストレージを作成します
+func NewMockStorage() *MockStorage {
+	return &MockStorage{
+		files: make(map[string][]string),
+	}
+}
+
+// Load はモックされたファイルの内容を返します
+func (ms *MockStorage) Load(filename string) ([]string, error) {
+	if content, exists := ms.files[filename]; exists {
+		return content, nil
+	}
+	return []string{}, nil
+}
+
+// Save はモックストレージにファイルの内容を保存します
+func (ms *MockStorage) Save(filename string, content []string) error {
+	ms.files[filename] = content
+	return nil
+}
+
+// GetSavedContent は保存された内容を取得します（テスト用）
+func (ms *MockStorage) GetSavedContent(filename string) []string {
+	return ms.files[filename]
+}

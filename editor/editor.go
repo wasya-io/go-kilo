@@ -33,6 +33,7 @@ type Editor struct {
 	dirty       bool
 	message     string
 	messageTime time.Time
+	storage     Storage
 }
 
 // newRow は新しいRow構造体を作成する
@@ -126,6 +127,7 @@ func New(testMode bool) (*Editor, error) {
 		rowOffset:  0,
 		colOffset:  0,
 		dirty:      false,
+		storage:    NewFileStorage(),
 	}
 
 	// テスト用のダミーテキストを追加
@@ -502,26 +504,11 @@ func (e *Editor) insertNewline() {
 func (e *Editor) OpenFile(filename string) error {
 	e.filename = filename
 
-	file, err := os.Open(filename)
-	if err != nil {
-		if os.IsNotExist(err) {
-			// 新規ファイルの場合は空のバッファを用意
-			e.rows = make([]*Row, 0)
-			e.setStatusMessage("New file")
-			return nil
-		}
-		return err
-	}
-	defer file.Close()
-
-	// ファイル全体を読み込んでから行に分割
-	content, err := os.ReadFile(filename)
+	lines, err := e.storage.Load(filename)
 	if err != nil {
 		return err
 	}
 
-	// 改行で分割して行を取得
-	lines := strings.Split(strings.TrimRight(string(content), "\n"), "\n")
 	e.rows = make([]*Row, len(lines))
 	for i, line := range lines {
 		e.rows[i] = newRow(line)
@@ -544,7 +531,7 @@ func (e *Editor) SaveFile() error {
 		content[i] = row.chars
 	}
 
-	err := os.WriteFile(e.filename, []byte(strings.Join(content, "\n")), 0644)
+	err := e.storage.Save(e.filename, content)
 	if err != nil {
 		return err
 	}
