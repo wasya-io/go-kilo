@@ -161,11 +161,6 @@ func (e *Editor) UpdateScroll() {
 	}
 }
 
-// SetKeyReader はキー入力読み取りインターフェースを設定する
-func (e *Editor) SetKeyReader(reader KeyReader) {
-	e.input.SetKeyReader(reader)
-}
-
 // QuitChan は終了シグナルを監視するためのチャネルを返す
 func (e *Editor) QuitChan() <-chan struct{} {
 	return e.quit
@@ -201,24 +196,4 @@ func (e *Editor) SaveFile() error {
 // setStatusMessage はステータスメッセージを設定する
 func (e *Editor) setStatusMessage(format string, args ...interface{}) {
 	e.ui.SetMessage(format, args...)
-}
-
-// IsDirty は未保存の変更があるかどうかを返す
-func (e *Editor) IsDirty() bool {
-	return e.buffer.IsDirty()
-}
-
-// GetCharAtCursor は現在のカーソル位置の文字を返す
-func (e *Editor) GetCharAtCursor() string {
-	return e.buffer.GetCharAtCursor()
-}
-
-// GetContent は指定された行の内容を返す
-func (e *Editor) GetContent(lineNum int) string {
-	return e.buffer.GetContent(lineNum)
-}
-
-// GetLineCount は行数を返す
-func (e *Editor) GetLineCount() int {
-	return e.buffer.GetLineCount()
 }

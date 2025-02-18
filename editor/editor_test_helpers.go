@@ -21,6 +21,16 @@ func (e *Editor) GetRows() []string {
 	return e.buffer.GetAllContent()
 }
 
+// SetKeyReader はキー入力読み取りインターフェースを設定する
+func (e *Editor) SetKeyReader(reader KeyReader) {
+	e.input.SetKeyReader(reader)
+}
+
+// IsDirty は未保存の変更があるかどうかを返す
+func (e *Editor) IsDirty() bool {
+	return e.buffer.IsDirty()
+}
+
 // TestInput はテスト用に1文字入力をシミュレートする
 func (e *Editor) TestInput(r rune) error {
 	e.buffer.InsertChar(r)
@@ -120,6 +130,21 @@ func (e *Editor) TestMoveCursorByByte(direction byte) error {
 		return fmt.Errorf("unknown direction: %c", direction)
 	}
 	return nil
+}
+
+// GetCharAtCursor は現在のカーソル位置の文字を返す
+func (e *Editor) GetCharAtCursor() string {
+	return e.buffer.GetCharAtCursor()
+}
+
+// GetContent は指定された行の内容を返す
+func (e *Editor) GetContent(lineNum int) string {
+	return e.buffer.GetContent(lineNum)
+}
+
+// GetLineCount は行数を返す
+func (e *Editor) GetLineCount() int {
+	return e.buffer.GetLineCount()
 }
 
 // MockStorage はテスト用のストレージモックです

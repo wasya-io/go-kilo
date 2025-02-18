@@ -1,5 +1,17 @@
 # CHANGELOG
 
+## [0.0.23] - 2024-02-19
+### Changed
+- テスト用メソッドの再配置
+  - テストでのみ使用されるメソッドを`editor.go`から`editor_test_helpers.go`に移動
+  - 以下のメソッドを移動
+    - `GetCharAtCursor()`
+    - `GetContent()`
+    - `GetLineCount()`
+    - `SetKeyReader()`
+    - `IsDirty()`
+  - エディタコアの責務をより明確に分離
+
 ## [0.0.22] - 2024-02-19
 ### Added
 - タブキーのカスタマイズ機能を実装
