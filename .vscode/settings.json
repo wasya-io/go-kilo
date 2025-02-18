@@ -1,0 +1,15 @@
+{
+    "go.testTimeout": "30s",
+    "go.coverOnSave": true,
+    "go.testOnSave": false,
+    "go.coverageDecorator": {
+        "type": "highlight",
+        "coveredHighlightColor": "rgba(64,128,128,0.2)",
+        "uncoveredHighlightColor": "rgba(128,64,64,0.2)",
+        "coveredBorderColor": "rgba(64,128,128,0.4)",
+        "uncoveredBorderColor": "rgba(128,64,64,0.4)"
+    },
+    "go.testTags": null,
+    "go.testFlags": ["-v", "-run", "^Test"],
+    "go.mod": "github.com/wasya-io/go-kilo"
+}
