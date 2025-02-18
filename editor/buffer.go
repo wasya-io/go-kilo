@@ -165,10 +165,8 @@ func (b *Buffer) MoveCursor(movement CursorMovement) {
 	switch movement {
 	case CursorLeft:
 		if b.cursor.X > 0 {
-			// 現在の行の前の文字の位置に移動
 			b.cursor.X--
 		} else if b.cursor.Y > 0 {
-			// 前の行の末尾に移動
 			b.cursor.Y--
 			targetRow := b.getRow(b.cursor.Y)
 			if targetRow != nil {
@@ -176,37 +174,38 @@ func (b *Buffer) MoveCursor(movement CursorMovement) {
 			}
 		}
 	case CursorRight:
-		// 現在の行の文字数を取得
 		maxX := currentRow.GetRuneCount()
 		if b.cursor.X < maxX {
-			// 次の文字の位置に移動
 			b.cursor.X++
 		} else if b.cursor.Y < len(b.lines)-1 {
-			// 次の行の先頭に移動
 			b.cursor.Y++
 			b.cursor.X = 0
 		}
 	case CursorUp:
 		if b.cursor.Y > 0 {
-			targetRow := b.getRow(b.cursor.Y - 1)
-			if targetRow != nil {
-				// カーソルのX位置を維持しつつ、上の行の範囲内に収める
-				if b.cursor.X > targetRow.GetRuneCount() {
-					b.cursor.X = targetRow.GetRuneCount()
-				}
-			}
+			// 現在のカーソル位置の表示位置を取得
+			currentScreenPos := currentRow.OffsetToScreenPosition(b.cursor.X)
+
+			// 上の行に移動
 			b.cursor.Y--
+			targetRow := b.getRow(b.cursor.Y)
+			if targetRow != nil {
+				// 同じ表示位置に最も近い文字位置を探す
+				b.cursor.X = targetRow.ScreenPositionToOffset(currentScreenPos)
+			}
 		}
 	case CursorDown:
 		if b.cursor.Y < len(b.lines)-1 {
-			targetRow := b.getRow(b.cursor.Y + 1)
-			if targetRow != nil {
-				// カーソルのX位置を維持しつつ、下の行の範囲内に収める
-				if b.cursor.X > targetRow.GetRuneCount() {
-					b.cursor.X = targetRow.GetRuneCount()
-				}
-			}
+			// 現在のカーソル位置の表示位置を取得
+			currentScreenPos := currentRow.OffsetToScreenPosition(b.cursor.X)
+
+			// 下の行に移動
 			b.cursor.Y++
+			targetRow := b.getRow(b.cursor.Y)
+			if targetRow != nil {
+				// 同じ表示位置に最も近い文字位置を探す
+				b.cursor.X = targetRow.ScreenPositionToOffset(currentScreenPos)
+			}
 		}
 	}
 }
