@@ -203,6 +203,56 @@ func TestCursorMovementWithMultibyte(t *testing.T) {
 			wantY:    0,
 			wantChar: "c",
 		},
+		{
+			name: "ASCIIの行から全角文字の行へ下移動（行頭位置）",
+			setup: func(ed *editor.Editor) {
+				ed.TestSetCursor(0, 0) // "a"の位置
+			},
+			movement: editor.CursorDown,
+			wantX:    0, // "あ"の位置
+			wantY:    1,
+			wantChar: "あ",
+		},
+		{
+			name: "ASCIIの行から全角文字の行へ下移動（中間位置）",
+			setup: func(ed *editor.Editor) {
+				ed.TestSetCursor(2, 0) // "c"の位置
+			},
+			movement: editor.CursorDown,
+			wantX:    1, // "い"の位置
+			wantY:    1,
+			wantChar: "い",
+		},
+		{
+			name: "全角文字の行からASCIIの行へ下移動（行頭位置）",
+			setup: func(ed *editor.Editor) {
+				ed.TestSetCursor(0, 1) // "あ"の位置
+			},
+			movement: editor.CursorDown,
+			wantX:    0, // "a"の位置
+			wantY:    2,
+			wantChar: "a",
+		},
+		{
+			name: "全角文字の行からASCIIの行へ上移動（中間位置）",
+			setup: func(ed *editor.Editor) {
+				ed.TestSetCursor(1, 1) // "い"の位置
+			},
+			movement: editor.CursorUp,
+			wantX:    2, // "c"の位置
+			wantY:    0,
+			wantChar: "c",
+		},
+		{
+			name: "全角文字の行からASCIIの行へ上移動（行頭位置）",
+			setup: func(ed *editor.Editor) {
+				ed.TestSetCursor(0, 1) // "あ"の位置
+			},
+			movement: editor.CursorUp,
+			wantX:    0, // "a"の位置
+			wantY:    0,
+			wantChar: "a",
+		},
 	}
 
 	for _, tt := range tests {

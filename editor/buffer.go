@@ -363,26 +363,27 @@ func (r *Row) ScreenPositionToOffset(screenPos int) int {
 		return 0
 	}
 
-	// 二分探索で位置を見つける
-	left, right := 0, len(r.positions)-1
-	for left < right {
-		mid := (left + right) / 2
-		if r.positions[mid] == screenPos {
-			return mid
-		} else if r.positions[mid] < screenPos {
-			if mid+1 < len(r.positions) && r.positions[mid+1] > screenPos {
-				// 位置が2つの文字の間にある場合、近い方を選択
-				if screenPos-r.positions[mid] < r.positions[mid+1]-screenPos {
-					return mid
-				}
-				return mid + 1
+	// 画面位置に最も近い文字位置を探す
+	for i := 0; i < len(r.positions); i++ {
+		// 現在の文字の表示開始位置
+		currentPos := r.positions[i]
+		// 次の文字の表示開始位置（最後の文字の場合は行の総幅を使用）
+		nextPos := r.totalWidth
+		if i < len(r.positions)-1 {
+			nextPos = r.positions[i+1]
+		}
+
+		// 画面位置が現在の文字の範囲内にある場合
+		if screenPos >= currentPos && screenPos < nextPos {
+			// より近い方の文字位置を返す
+			if i < len(r.positions)-1 && (nextPos-screenPos < screenPos-currentPos) {
+				return i + 1
 			}
-			left = mid + 1
-		} else {
-			right = mid
+			return i
 		}
 	}
-	return left
+
+	return len(r.runes)
 }
 
 // OffsetToScreenPosition は文字列中のオフセットから画面上の位置を取得する
