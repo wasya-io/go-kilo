@@ -2,6 +2,7 @@ package editor
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"time"
 )
@@ -120,6 +121,49 @@ func (ui *UI) getScreenX(rows []*Row, cy, cx, colOffset int) int {
 		return rows[cy].OffsetToScreenPosition(cx) - colOffset + 1
 	}
 	return 1
+}
+
+// scroll は必要に応じてスクロール位置を更新する
+func (ui *UI) scroll(cx, cy int, buffer *Buffer, rowOffset, colOffset *int) {
+	// 垂直スクロール
+	if cy < *rowOffset {
+		*rowOffset = cy
+	}
+	if cy >= *rowOffset+ui.screenRows-2 {
+		*rowOffset = cy - (ui.screenRows - 3)
+	}
+
+	// 水平スクロール
+	screenX := 0
+	if cy < buffer.GetLineCount() {
+		row := buffer.GetContent(cy)
+		if len(row) > 0 {
+			screenX = len([]rune(row[:cx]))
+		}
+	}
+
+	if screenX < *colOffset {
+		*colOffset = screenX
+	}
+	if screenX >= *colOffset+ui.screenCols {
+		*colOffset = screenX - ui.screenCols + 1
+	}
+}
+
+// RefreshScreen は画面を更新する
+func (ui *UI) RefreshScreen(buffer *Buffer, filename string, rowOffset, colOffset int) error {
+	cx, cy := buffer.GetCursor()
+	ui.scroll(cx, cy, buffer, &rowOffset, &colOffset)
+
+	lines := make([]*Row, buffer.GetLineCount())
+	for i := 0; i < buffer.GetLineCount(); i++ {
+		content := buffer.GetContent(i)
+		lines[i] = NewRow(content)
+	}
+
+	output := ui.RenderScreen(lines, filename, buffer.IsDirty(), cx, cy, rowOffset, colOffset)
+	_, err := os.Stdout.WriteString(output)
+	return err
 }
 
 // ANSI エスケープシーケンス関連のメソッド

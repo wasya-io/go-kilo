@@ -9,6 +9,7 @@ import (
 type Storage interface {
 	Load(filename string) ([]string, error)
 	Save(filename string, content []string) error
+	FileExists(filename string) bool
 }
 
 // FileStorage は実際のファイルシステムを使用した Storage の実装です
@@ -34,4 +35,10 @@ func (fs *FileStorage) Load(filename string) ([]string, error) {
 // Save はコンテンツをファイルに保存します
 func (fs *FileStorage) Save(filename string, content []string) error {
 	return os.WriteFile(filename, []byte(strings.Join(content, "\n")), 0644)
+}
+
+// FileExists はファイルが存在するかどうかを確認します
+func (fs *FileStorage) FileExists(filename string) bool {
+	_, err := os.Stat(filename)
+	return !os.IsNotExist(err)
 }

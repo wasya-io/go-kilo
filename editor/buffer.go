@@ -140,6 +140,23 @@ func (b *Buffer) GetContent(lineNum int) string {
 	return ""
 }
 
+// GetCharAtCursorPosition は指定された位置の文字を返す
+func (b *Buffer) GetCharAtCursorPosition(cx, cy int) string {
+	if content := b.GetContent(cy); content != "" {
+		runes := []rune(content)
+		if cx < len(runes) {
+			return string(runes[cx])
+		}
+	}
+	return ""
+}
+
+// GetCharAtCursor は現在のカーソル位置の文字を返す
+func (b *Buffer) GetCharAtCursor() string {
+	cx, cy := b.GetCursor()
+	return b.GetCharAtCursorPosition(cx, cy)
+}
+
 // GetLineCount は行数を返す
 func (b *Buffer) GetLineCount() int {
 	return len(b.rows)

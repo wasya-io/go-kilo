@@ -75,47 +75,9 @@ func (e *Editor) Cleanup() {
 	os.Stdout.WriteString(e.ui.moveCursorToHome())
 }
 
-// scroll は必要に応じてスクロール位置を更新する
-func (e *Editor) scroll() {
-	cx, cy := e.buffer.GetCursor()
-
-	// 垂直スクロール
-	if cy < e.rowOffset {
-		e.rowOffset = cy
-	}
-	if cy >= e.rowOffset+e.ui.screenRows-2 {
-		e.rowOffset = cy - (e.ui.screenRows - 3)
-	}
-
-	// 水平スクロール
-	screenX := 0
-	if cy < e.buffer.GetLineCount() {
-		row := e.buffer.GetContent(cy)
-		if len(row) > 0 {
-			screenX = len([]rune(row[:cx]))
-		}
-	}
-
-	if screenX < e.colOffset {
-		e.colOffset = screenX
-	}
-	if screenX >= e.colOffset+e.ui.screenCols {
-		e.colOffset = screenX - e.ui.screenCols + 1
-	}
-}
-
 // RefreshScreen は画面を更新する
 func (e *Editor) RefreshScreen() error {
-	e.scroll()
-	lines := make([]*Row, e.buffer.GetLineCount())
-	for i := 0; i < e.buffer.GetLineCount(); i++ {
-		content := e.buffer.GetContent(i)
-		lines[i] = NewRow(content)
-	}
-	cx, cy := e.buffer.GetCursor()
-	output := e.ui.RenderScreen(lines, e.filename, e.buffer.IsDirty(), cx, cy, e.rowOffset, e.colOffset)
-	_, err := os.Stdout.WriteString(output)
-	return err
+	return e.ui.RefreshScreen(e.buffer, e.filename, e.rowOffset, e.colOffset)
 }
 
 // ProcessKeypress はキー入力を処理する
@@ -141,12 +103,10 @@ func (e *Editor) Quit() {
 // OpenFile は指定されたファイルを読み込む
 func (e *Editor) OpenFile(filename string) error {
 	e.filename = filename
-
 	lines, err := e.storage.Load(filename)
 	if err != nil {
 		return err
 	}
-
 	e.buffer.LoadContent(lines)
 	e.setStatusMessage("File loaded")
 	return nil
@@ -177,14 +137,7 @@ func (e *Editor) setStatusMessage(format string, args ...interface{}) {
 
 // GetCharAtCursor は現在のカーソル位置の文字を返す
 func (e *Editor) GetCharAtCursor() string {
-	cx, cy := e.buffer.GetCursor()
-	if content := e.buffer.GetContent(cy); content != "" {
-		runes := []rune(content)
-		if cx < len(runes) {
-			return string(runes[cx])
-		}
-	}
-	return ""
+	return e.buffer.GetCharAtCursor()
 }
 
 // GetContent は指定された行の内容を返す
