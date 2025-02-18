@@ -443,3 +443,64 @@ func TestGetCharAtCursor(t *testing.T) {
 		}
 	})
 }
+
+// TestEscapeSequence はESCキーとエスケープシーケンスの処理をテストする
+func TestEscapeSequence(t *testing.T) {
+	ed, err := editor.New(true)
+	if err != nil {
+		t.Fatalf("エディタの初期化に失敗しました: %v", err)
+	}
+	defer ed.Cleanup()
+
+	tests := []struct {
+		name     string
+		input    []editor.KeyEvent
+		wantFunc func(*testing.T, *editor.Editor)
+	}{
+		{
+			name: "ESCキー単体",
+			input: []editor.KeyEvent{
+				{Type: editor.KeyEventSpecial, Key: editor.KeyEsc},
+			},
+			wantFunc: func(t *testing.T, e *editor.Editor) {
+				// ESCキーは特に状態を変更しないので、
+				// 正常に処理されたことだけを確認
+				if e.IsDirty() {
+					t.Error("バッファが変更されてはいけません")
+				}
+			},
+		},
+		{
+			name: "矢印キー（エスケープシーケンス）",
+			input: []editor.KeyEvent{
+				{Type: editor.KeyEventSpecial, Key: editor.KeyArrowRight},
+				{Type: editor.KeyEventSpecial, Key: editor.KeyArrowLeft},
+			},
+			wantFunc: func(t *testing.T, e *editor.Editor) {
+				// カーソルが元の位置に戻っていることを確認
+				x, y := e.TestGetCursor()
+				if x != 0 || y != 0 {
+					t.Errorf("カーソル位置が正しくありません: got (%d,%d), want (0,0)", x, y)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// テスト用のキーリーダーを設定
+			mockReader := editor.NewMockKeyReader(tt.input)
+			ed.SetKeyReader(mockReader)
+
+			// 各キー入力を処理
+			for range tt.input {
+				if err := ed.ProcessKeypress(); err != nil {
+					t.Fatalf("キー処理でエラーが発生: %v", err)
+				}
+			}
+
+			// 結果を検証
+			tt.wantFunc(t, ed)
+		})
+	}
+}

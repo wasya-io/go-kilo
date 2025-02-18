@@ -35,6 +35,7 @@ const (
 	KeyCtrlQ
 	KeyCtrlC
 	KeyCtrlS
+	KeyEsc // ESCキーを追加
 )
 
 // KeyReader はキー入力を読み取るインターフェース
@@ -132,13 +133,23 @@ func (kr *StandardKeyReader) ReadKey() (KeyEvent, error) {
 
 // handleEscapeSequence はエスケープシーケンスを解析してKeyEventに変換する
 func (kr *StandardKeyReader) handleEscapeSequence(buf []byte) (KeyEvent, error) {
+	// ESCキー単体の場合の処理
+	if len(buf) == 1 {
+		return KeyEvent{Type: KeyEventSpecial, Key: KeyEsc}, nil
+	}
+
+	// エスケープシーケンスの場合
 	n := len(buf)
 	if n < 3 {
-		// バッファに3バイト未満しかない場合は追加で読み取り
-		seq := make([]byte, 2)
+		// より柔軟な読み取り処理
+		seq := make([]byte, 3-n)
 		nseq, err := os.Stdin.Read(seq)
-		if err != nil || nseq != 2 {
-			return KeyEvent{}, nil
+		if err != nil {
+			return KeyEvent{}, err
+		}
+		// タイムアウトまたは読み取りエラーの場合はESCキーとして扱う
+		if nseq == 0 {
+			return KeyEvent{Type: KeyEventSpecial, Key: KeyEsc}, nil
 		}
 		// バッファを結合
 		buf = append(buf, seq[:nseq]...)
@@ -157,7 +168,8 @@ func (kr *StandardKeyReader) handleEscapeSequence(buf []byte) (KeyEvent, error) 
 		}
 	}
 
-	return KeyEvent{}, nil
+	// 未知のエスケープシーケンスの場合はESCキーとして扱う
+	return KeyEvent{Type: KeyEventSpecial, Key: KeyEsc}, nil
 }
 
 // InputHandler はキー入力とその処理を管理する

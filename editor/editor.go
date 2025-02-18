@@ -135,6 +135,11 @@ func (e *Editor) setStatusMessage(format string, args ...interface{}) {
 	e.ui.SetMessage(format, args...)
 }
 
+// IsDirty は未保存の変更があるかどうかを返す
+func (e *Editor) IsDirty() bool {
+	return e.buffer.IsDirty()
+}
+
 // GetCharAtCursor は現在のカーソル位置の文字を返す
 func (e *Editor) GetCharAtCursor() string {
 	return e.buffer.GetCharAtCursor()
