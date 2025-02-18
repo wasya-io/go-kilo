@@ -201,8 +201,11 @@ func (ih *InputHandler) ProcessKeypress() error {
 
 	switch event.Type {
 	case KeyEventChar:
-		// 通常の文字入力を処理
-		ih.editor.buffer.InsertChar(event.Rune)
+		// 括弧類の補完処理
+		if shouldAutoClose := ih.handleBracketPair(event.Rune); !shouldAutoClose {
+			// 通常の文字入力を処理
+			ih.editor.buffer.InsertChar(event.Rune)
+		}
 	case KeyEventSpecial:
 		// 特殊キーを処理
 		if err := ih.handleSpecialKey(event.Key); err != nil {
@@ -216,6 +219,60 @@ func (ih *InputHandler) ProcessKeypress() error {
 	}
 
 	return ih.editor.RefreshScreen()
+}
+
+// handleBracketPair は括弧や引用符の補完処理を行う
+// 戻り値は補完処理を行ったかどうか
+func (ih *InputHandler) handleBracketPair(r rune) bool {
+	// 開き括弧と閉じ括弧のマッピング
+	pairs := map[rune]rune{
+		'(':  ')',
+		'{':  '}',
+		'[':  ']',
+		'"':  '"',
+		'\'': '\'',
+		'`':  '`',
+	}
+
+	// 閉じ括弧があるかチェック
+	closeChar, isPair := pairs[r]
+	if !isPair {
+		return false
+	}
+
+	// 引用符（", ', `）の場合、同じ行の左側に同じ文字があるかチェック
+	if r == '"' || r == '\'' || r == '`' {
+		if ih.hasQuoteInLine(r) {
+			ih.editor.buffer.InsertChar(r)
+			return true
+		}
+	}
+
+	// 開き括弧を挿入
+	ih.editor.buffer.InsertChar(r)
+	// 閉じ括弧を挿入
+	ih.editor.buffer.InsertChar(closeChar)
+	// カーソルを一つ戻す
+	ih.editor.buffer.MoveCursor(CursorLeft)
+	return true
+}
+
+// hasQuoteInLine は現在の行の左側に指定された引用符があるかどうかを確認する
+func (ih *InputHandler) hasQuoteInLine(quote rune) bool {
+	cursor := ih.editor.buffer.GetCursor()
+	content := ih.editor.buffer.GetContent(cursor.Y)
+	if content == "" {
+		return false
+	}
+
+	// カーソルの左側の文字列を検査
+	runes := []rune(content)
+	for i := 0; i < cursor.X && i < len(runes); i++ {
+		if runes[i] == quote {
+			return true
+		}
+	}
+	return false
 }
 
 // handleSpecialKey は特殊キーの処理を行う
