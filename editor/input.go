@@ -82,7 +82,7 @@ func (kr *StandardKeyReader) ReadKey() (KeyEvent, error) {
 	}
 
 	// 制御キーの処理
-	if n == 1 {
+	if n == 1 && buf[0] < 32 {
 		switch buf[0] {
 		case 'q' & 0x1f:
 			return KeyEvent{Type: KeyEventControl, Key: KeyCtrlQ}, nil
@@ -97,35 +97,35 @@ func (kr *StandardKeyReader) ReadKey() (KeyEvent, error) {
 
 	// マルチバイト文字の処理
 	data := buf[:n]
-	var events []KeyEvent
-
-	for len(data) > 0 {
-		r, size := utf8.DecodeRune(data)
-		if r == utf8.RuneError && size == 1 {
-			// 不正なUTF-8シーケンスの場合は1バイトスキップ
-			data = data[1:]
-			continue
-		}
-
-		if r != utf8.RuneError {
-			events = append(events, KeyEvent{Type: KeyEventChar, Rune: r})
-			data = data[size:]
-		} else {
-			// バッファが不完全なマルチバイト文字を含む場合、追加で読み取り
-			tmp := make([]byte, 4)
-			n, err = os.Stdin.Read(tmp)
-			if err != nil {
-				return KeyEvent{}, err
+	processed := 0
+	for processed < len(data) {
+		r, size := utf8.DecodeRune(data[processed:])
+		if r == utf8.RuneError {
+			if size == 1 {
+				// 不完全なマルチバイト文字の場合、追加バイトを読み取る
+				tmp := make([]byte, 4)
+				n, err = os.Stdin.Read(tmp)
+				if err != nil {
+					return KeyEvent{}, err
+				}
+				data = append(data, tmp[:n]...)
+				continue
 			}
-			data = append(data, tmp[:n]...)
+			return KeyEvent{}, fmt.Errorf("invalid input sequence")
 		}
+
+		// 有効な文字の場合はバッファに追加
+		if utf8.ValidRune(r) && (r >= 32 || r == '\t') {
+			kr.inputBuffer = append(kr.inputBuffer, KeyEvent{Type: KeyEventChar, Rune: r})
+		}
+		processed += size
 	}
 
-	// 複数の文字が入力された場合は、最初の文字を返し、残りはバッファに保存
-	if len(events) > 0 {
-		// 最初の文字を返し、残りをバッファに保存
-		kr.inputBuffer = append(kr.inputBuffer, events[1:]...)
-		return events[0], nil
+	// バッファから1つ取り出して返す
+	if len(kr.inputBuffer) > 0 {
+		event := kr.inputBuffer[0]
+		kr.inputBuffer = kr.inputBuffer[1:]
+		return event, nil
 	}
 
 	return KeyEvent{}, fmt.Errorf("no valid input")
@@ -194,15 +194,22 @@ func (ih *InputHandler) ProcessKeypress() error {
 	}
 
 	switch event.Type {
-	case KeyEventSpecial:
-		return ih.handleSpecialKey(event.Key)
-	case KeyEventControl:
-		return ih.handleControlKey(event.Key)
 	case KeyEventChar:
+		// 通常の文字入力を処理
 		ih.editor.buffer.InsertChar(event.Rune)
+	case KeyEventSpecial:
+		// 特殊キーを処理
+		if err := ih.handleSpecialKey(event.Key); err != nil {
+			return err
+		}
+	case KeyEventControl:
+		// コントロールキーを処理
+		if err := ih.handleControlKey(event.Key); err != nil {
+			return err
+		}
 	}
 
-	return nil
+	return ih.editor.RefreshScreen()
 }
 
 // handleSpecialKey は特殊キーの処理を行う
@@ -210,12 +217,16 @@ func (ih *InputHandler) handleSpecialKey(key Key) error {
 	switch key {
 	case KeyArrowUp:
 		ih.editor.buffer.MoveCursor(CursorUp)
+		ih.editor.UpdateScroll()
 	case KeyArrowDown:
 		ih.editor.buffer.MoveCursor(CursorDown)
+		ih.editor.UpdateScroll()
 	case KeyArrowRight:
 		ih.editor.buffer.MoveCursor(CursorRight)
+		ih.editor.UpdateScroll()
 	case KeyArrowLeft:
 		ih.editor.buffer.MoveCursor(CursorLeft)
+		ih.editor.UpdateScroll()
 	case KeyBackspace:
 		ih.editor.buffer.DeleteChar()
 	case KeyEnter:

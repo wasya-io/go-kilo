@@ -31,6 +31,11 @@ func main() {
 		}
 	}
 
+	// 初期画面を表示
+	if err := ed.RefreshScreen(); err != nil {
+		die(err)
+	}
+
 	// シグナルハンドリングのための準備
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
@@ -47,10 +52,7 @@ func main() {
 		case <-ed.QuitChan():
 			return // cleanup関数が遅延実行される
 		default:
-			if err := ed.RefreshScreen(); err != nil {
-				die(err)
-			}
-
+			// キー入力を処理（画面更新も含む）
 			if err := ed.ProcessKeypress(); err != nil {
 				die(err)
 			}

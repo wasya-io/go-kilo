@@ -38,7 +38,7 @@ func (e *Editor) TestSetCursor(x, y int) error {
 
 // TestGetCursor はテスト用にカーソル位置を取得する
 func (e *Editor) TestGetCursor() (x, y int) {
-	return e.buffer.GetCursor()
+	return e.buffer.GetCursorXY()
 }
 
 // TestMoveCursor はテスト用にカーソルを移動する
