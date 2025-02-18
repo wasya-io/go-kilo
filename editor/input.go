@@ -36,7 +36,8 @@ const (
 	KeyCtrlC
 	KeyCtrlS
 	KeyEsc
-	KeyTab // Add Tab key
+	KeyTab
+	KeyShiftTab // Add Shift+Tab key
 )
 
 // KeyReader はキー入力を読み取るインターフェース
@@ -70,6 +71,11 @@ func (kr *StandardKeyReader) ReadKey() (KeyEvent, error) {
 	n, err := os.Stdin.Read(buf)
 	if err != nil {
 		return KeyEvent{}, err
+	}
+
+	// Shift+Tab の処理（エスケープシーケンス '[Z' を検出）
+	if n >= 3 && buf[0] == '\x1b' && buf[1] == '[' && buf[2] == 'Z' {
+		return KeyEvent{Type: KeyEventSpecial, Key: KeyShiftTab}, nil
 	}
 
 	// タブキーの処理
@@ -178,6 +184,14 @@ func (kr *StandardKeyReader) handleEscapeSequence(buf []byte) (KeyEvent, error) 
 	return KeyEvent{Type: KeyEventSpecial, Key: KeyEsc}, nil
 }
 
+// min は2つの整数のうち小さい方を返す
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
 // InputHandler はキー入力とその処理を管理する
 type InputHandler struct {
 	keyReader KeyReader
@@ -282,6 +296,46 @@ func (ih *InputHandler) handleSpecialKey(key Key) error {
 		// タブ文字をスペースに変換して挿入
 		for i := 0; i < ih.editor.config.TabWidth; i++ {
 			ih.editor.buffer.InsertChar(' ')
+		}
+	case KeyShiftTab:
+		// カーソルが行頭にある場合は何もしない
+		cursor := ih.editor.buffer.GetCursor()
+		if cursor.X == 0 {
+			return nil
+		}
+
+		// 現在の行の内容を取得
+		content := ih.editor.buffer.GetContent(cursor.Y)
+		if content == "" {
+			return nil
+		}
+
+		// カーソルの左側のスペースを数える
+		runes := []rune(content)
+		spaceCount := 0
+		pos := cursor.X - 1
+		for pos >= 0 && runes[pos] == ' ' {
+			spaceCount++
+			pos--
+		}
+
+		// スペースがない場合は何もしない
+		if spaceCount == 0 {
+			return nil
+		}
+
+		// 現在のスペース数から、次に目指すスペース数を計算
+		tabWidth := ih.editor.config.TabWidth
+		targetSpaces := (spaceCount - 1) / tabWidth * tabWidth
+		if targetSpaces == spaceCount {
+			targetSpaces = ((spaceCount-1)/tabWidth - 1) * tabWidth
+		}
+		targetSpaces = max(0, targetSpaces) // マイナスにならないように
+
+		// スペースを削除（最大でもスペース数分まで）
+		deleteCount := min(spaceCount-targetSpaces, spaceCount)
+		for i := 0; i < deleteCount; i++ {
+			ih.editor.buffer.DeleteChar()
 		}
 	case KeyArrowUp:
 		ih.editor.buffer.MoveCursor(CursorUp)

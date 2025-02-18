@@ -599,3 +599,107 @@ func TestTabHandling(t *testing.T) {
 		t.Errorf("タブの展開が正しくありません: got %q, want %q", content, expected)
 	}
 }
+
+func TestShiftTabHandling(t *testing.T) {
+	// Create test cases with different TAB_WIDTH settings
+	tests := []struct {
+		name      string
+		tabWidth  string
+		content   string
+		cursorX   int
+		wantCount int
+	}{
+		{
+			name:      "TAB_WIDTH=4: delete 4 spaces",
+			tabWidth:  "4",
+			content:   "    abc",
+			cursorX:   4,
+			wantCount: 0,
+		},
+		{
+			name:      "TAB_WIDTH=4: delete 1 space from 5 spaces",
+			tabWidth:  "4",
+			content:   "     abc",
+			cursorX:   5,
+			wantCount: 4,
+		},
+		{
+			name:      "TAB_WIDTH=4: delete 2 spaces from 6 spaces",
+			tabWidth:  "4",
+			content:   "      abc",
+			cursorX:   6,
+			wantCount: 4,
+		},
+		{
+			name:      "TAB_WIDTH=2: delete 2 spaces",
+			tabWidth:  "2",
+			content:   "  abc",
+			cursorX:   2,
+			wantCount: 0,
+		},
+		{
+			name:      "TAB_WIDTH=2: delete 1 space from 3 spaces",
+			tabWidth:  "2",
+			content:   "   abc",
+			cursorX:   3,
+			wantCount: 2,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Set TAB_WIDTH environment variable
+			os.Setenv("TAB_WIDTH", tt.tabWidth)
+			defer os.Unsetenv("TAB_WIDTH")
+
+			ed, err := editor.New(true)
+			if err != nil {
+				t.Fatalf("エディタの初期化に失敗しました: %v", err)
+			}
+			defer ed.Cleanup()
+
+			// Set initial content and cursor position
+			filename, cleanup := setupTestFile(t, tt.content)
+			defer cleanup()
+
+			if err := ed.OpenFile(filename); err != nil {
+				t.Fatalf("ファイルを開けませんでした: %v", err)
+			}
+
+			if err := ed.TestSetCursor(tt.cursorX, 0); err != nil {
+				t.Fatalf("カーソル位置の設定に失敗しました: %v", err)
+			}
+
+			// Create mock key event for Shift+Tab
+			events := []editor.KeyEvent{
+				{Type: editor.KeyEventSpecial, Key: editor.KeyShiftTab},
+			}
+			mockReader := editor.NewMockKeyReader(events)
+			ed.SetKeyReader(mockReader)
+
+			// Process Shift+Tab key event
+			if err := ed.ProcessKeypress(); err != nil {
+				t.Fatalf("キー処理でエラーが発生: %v", err)
+			}
+
+			// Verify the result
+			content := ed.GetContent(0)
+			leadingSpaces := countLeadingSpaces(content)
+			if leadingSpaces != tt.wantCount {
+				t.Errorf("先頭スペース数が正しくありません: got %d, want %d", leadingSpaces, tt.wantCount)
+			}
+		})
+	}
+}
+
+// countLeadingSpaces は文字列の先頭の空白文字数を数える
+func countLeadingSpaces(s string) int {
+	count := 0
+	for _, r := range s {
+		if r != ' ' {
+			break
+		}
+		count++
+	}
+	return count
+}
