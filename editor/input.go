@@ -35,7 +35,8 @@ const (
 	KeyCtrlQ
 	KeyCtrlC
 	KeyCtrlS
-	KeyEsc // ESCキーを追加
+	KeyEsc
+	KeyTab // Add Tab key
 )
 
 // KeyReader はキー入力を読み取るインターフェース
@@ -69,6 +70,11 @@ func (kr *StandardKeyReader) ReadKey() (KeyEvent, error) {
 	n, err := os.Stdin.Read(buf)
 	if err != nil {
 		return KeyEvent{}, err
+	}
+
+	// タブキーの処理
+	if n == 1 && buf[0] == '\t' {
+		return KeyEvent{Type: KeyEventSpecial, Key: KeyTab}, nil
 	}
 
 	// エスケープシーケンスの処理
@@ -215,6 +221,11 @@ func (ih *InputHandler) ProcessKeypress() error {
 // handleSpecialKey は特殊キーの処理を行う
 func (ih *InputHandler) handleSpecialKey(key Key) error {
 	switch key {
+	case KeyTab:
+		// タブ文字をスペースに変換して挿入
+		for i := 0; i < ih.editor.config.TabWidth; i++ {
+			ih.editor.buffer.InsertChar(' ')
+		}
 	case KeyArrowUp:
 		ih.editor.buffer.MoveCursor(CursorUp)
 		ih.editor.UpdateScroll()

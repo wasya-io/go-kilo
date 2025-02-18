@@ -2,6 +2,7 @@ package editor_test
 
 import (
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/wasya-io/go-kilo/editor"
@@ -552,5 +553,49 @@ func TestEscapeSequence(t *testing.T) {
 			// 結果を検証
 			tt.wantFunc(t, ed)
 		})
+	}
+}
+
+func TestTabHandling(t *testing.T) {
+	// Create a temporary .env file with custom TAB_WIDTH
+	os.Setenv("TAB_WIDTH", "4")
+
+	ed, err := editor.New(true)
+	if err != nil {
+		t.Fatalf("エディタの初期化に失敗しました: %v", err)
+	}
+	defer ed.Cleanup()
+
+	filename, cleanup := setupTestFile(t, "")
+	defer cleanup()
+
+	if err := ed.OpenFile(filename); err != nil {
+		t.Fatalf("ファイルを開けませんでした: %v", err)
+	}
+
+	// Create test events
+	events := []editor.KeyEvent{
+		{Type: editor.KeyEventSpecial, Key: editor.KeyTab},
+		{Type: editor.KeyEventChar, Rune: 'a'},
+	}
+
+	// Set up mock key reader
+	mockReader := editor.NewMockKeyReader(events)
+	ed.SetKeyReader(mockReader)
+
+	// Process key events
+	for range events {
+		if err := ed.ProcessKeypress(); err != nil {
+			t.Fatalf("キー処理でエラーが発生: %v", err)
+		}
+	}
+
+	// Verify the content
+	content := ed.GetContent(0)
+	expectedSpaces := strings.Repeat(" ", 4) // TAB_WIDTH=4 from env
+	expected := expectedSpaces + "a"
+
+	if content != expected {
+		t.Errorf("タブの展開が正しくありません: got %q, want %q", content, expected)
 	}
 }

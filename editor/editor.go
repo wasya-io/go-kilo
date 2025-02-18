@@ -16,6 +16,7 @@ type Editor struct {
 	colOffset   int
 	fileManager *FileManager
 	input       *InputHandler
+	config      *Config
 }
 
 // New は新しいEditorインスタンスを作成する
@@ -40,6 +41,7 @@ func New(testMode bool) (*Editor, error) {
 		buffer:    NewBuffer(),
 		rowOffset: 0,
 		colOffset: 0,
+		config:    LoadConfig(),
 	}
 
 	e.fileManager = NewFileManager(e.buffer)
