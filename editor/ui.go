@@ -39,7 +39,7 @@ func NewUI(rows, cols int, eventManager *events.EventManager) *UI {
 func (ui *UI) handleBufferEvent(event events.Event) {
 	if bufferEvent, ok := event.(*events.BufferEvent); ok {
 		// バッファの状態が実際に変更された場合のみ更新を行う
-		if bufferEvent.Pre != bufferEvent.Post {
+		if bufferEvent.HasChanges() {
 			// すべての更新を単一の画面更新にまとめる
 			ui.needsRefresh = true
 		}

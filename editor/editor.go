@@ -101,8 +101,8 @@ func (e *Editor) setupEventHandlers() {
 
 // handleBufferEvent はバッファイベントを処理する
 func (e *Editor) handleBufferEvent(event *events.BufferEvent) {
-	// イベントの状態チェックのみを行い、バッファの直接操作は行わない
-	if event.Pre == event.Post {
+	// イベントの状態変更を確認
+	if !event.HasChanges() {
 		return // 状態に変更がない場合は何もしない
 	}
 
@@ -147,15 +147,6 @@ func (e *Editor) handleFileEvent(event *events.FileEvent) {
 		}
 	}
 }
-
-// UIイベント関連の型を修正
-type uiEventType string
-
-const (
-	uiRefresh       uiEventType = "refresh"
-	uiScroll        uiEventType = "scroll"
-	uiStatusMessage uiEventType = "status_message"
-)
 
 // publishUIEvent はUIイベントを発行する
 func (e *Editor) publishUIEvent(eventType events.SubEventType, data interface{}) {

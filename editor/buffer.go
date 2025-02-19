@@ -128,22 +128,33 @@ func (b *Buffer) DeleteChar() {
 		return
 	}
 
+	prevState := b.getCurrentState()
+
 	// カーソルが行頭にある場合
 	if b.cursor.X == 0 {
 		if b.cursor.Y > 0 {
 			// 前の行に結合する処理
 			prevLine := b.lines[b.cursor.Y-1]
 			currLine := b.lines[b.cursor.Y]
+
 			// カーソルは前の行の末尾に移動
 			b.cursor.Y--
 			b.cursor.X = len([]rune(prevLine))
-			// 行を結合
-			b.lines[b.cursor.Y] = prevLine + currLine
-			// 現在の行を削除
-			b.lines = append(b.lines[:b.cursor.Y+1], b.lines[b.cursor.Y+2:]...)
+
+			// 行を結合（現在の行が空でない場合のみ）
+			if currLine != "" {
+				b.lines[b.cursor.Y] = prevLine + currLine
+			}
+
+			// 現在の行より後ろの行をすべて1つ前にシフト
+			copy(b.lines[b.cursor.Y+1:], b.lines[b.cursor.Y+2:])
+			// スライスの長さを1つ減らす
+			b.lines = b.lines[:len(b.lines)-1]
+
 			// キャッシュをクリア
-			delete(b.rowCache, b.cursor.Y)
-			delete(b.rowCache, b.cursor.Y+1)
+			for i := b.cursor.Y; i < len(b.lines); i++ {
+				delete(b.rowCache, i)
+			}
 			b.isDirty = true
 		}
 	} else {
@@ -157,6 +168,9 @@ func (b *Buffer) DeleteChar() {
 			b.isDirty = true
 		}
 	}
+
+	// イベントを発行
+	b.publishBufferEvent(events.BufferDeleteChar, b.cursor, nil, prevState)
 }
 
 // getRow は指定された行のRowオブジェクトを取得する
@@ -187,7 +201,6 @@ func (b *Buffer) MoveCursor(movement CursorMovement) {
 	switch movement {
 	case CursorLeft:
 		if b.cursor.X > 0 {
-			// カーソルを1文字分左に移動
 			b.cursor.X--
 		} else if b.cursor.Y > 0 {
 			b.cursor.Y--
@@ -199,7 +212,6 @@ func (b *Buffer) MoveCursor(movement CursorMovement) {
 	case CursorRight:
 		maxX := currentRow.GetRuneCount()
 		if b.cursor.X < maxX {
-			// カーソルを1文字分右に移動
 			b.cursor.X++
 		} else if b.cursor.Y < len(b.lines)-1 {
 			b.cursor.Y++
@@ -207,18 +219,24 @@ func (b *Buffer) MoveCursor(movement CursorMovement) {
 		}
 	case CursorUp:
 		if b.cursor.Y > 0 {
+			// 現在の行でのカーソル位置の表示幅を取得
+			currentVisualX := currentRow.OffsetToScreenPosition(b.cursor.X)
 			b.cursor.Y--
 			targetRow := b.getRow(b.cursor.Y)
 			if targetRow != nil {
-				b.cursor.X = min(b.cursor.X, targetRow.GetRuneCount())
+				// 移動先の行で同じ表示位置に最も近い文字位置を探す
+				b.cursor.X = targetRow.ScreenPositionToOffset(currentVisualX)
 			}
 		}
 	case CursorDown:
 		if b.cursor.Y < len(b.lines)-1 {
+			// 現在の行でのカーソル位置の表示幅を取得
+			currentVisualX := currentRow.OffsetToScreenPosition(b.cursor.X)
 			b.cursor.Y++
 			targetRow := b.getRow(b.cursor.Y)
 			if targetRow != nil {
-				b.cursor.X = min(b.cursor.X, targetRow.GetRuneCount())
+				// 移動先の行で同じ表示位置に最も近い文字位置を探す
+				b.cursor.X = targetRow.ScreenPositionToOffset(currentVisualX)
 			}
 		}
 	}
@@ -351,15 +369,16 @@ func (b *Buffer) publishBufferEvent(op events.BufferOperationType, pos Cursor, d
 	}
 
 	currentState := b.getCurrentState()
-	// 状態が実際に変更された場合のみイベントを発行
-	if prevState != currentState {
-		event := events.NewBufferEvent(
-			op,
-			events.Position{X: pos.X, Y: pos.Y},
-			data,
-			prevState,
-			currentState,
-		)
+	// イベントを作成して変更を確認
+	event := events.NewBufferEvent(
+		op,
+		events.Position{X: pos.X, Y: pos.Y},
+		data,
+		prevState,
+		currentState,
+	)
+
+	if event.HasChanges() {
 		b.eventManager.Publish(event)
 	}
 }
