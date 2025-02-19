@@ -19,16 +19,17 @@ type KeyEvent struct {
 type KeyEventType int
 
 const (
-	KeyEventChar    KeyEventType = iota // 通常の文字入力
-	KeyEventSpecial                     // 特殊キー（矢印キーなど）
-	KeyEventControl                     // 制御キー（Ctrl+など）
+	KeyEventChar KeyEventType = iota + 1 // 1から開始
+	KeyEventSpecial
+	KeyEventControl
 )
 
 // Key は特殊キーの種類を表す
 type Key int
 
 const (
-	KeyArrowUp Key = iota
+	KeyNone Key = iota
+	KeyArrowUp
 	KeyArrowDown
 	KeyArrowLeft
 	KeyArrowRight
@@ -242,15 +243,31 @@ type InputHandler struct {
 	keyReader    KeyReader
 	editor       EditorOperations
 	eventManager *events.EventManager
+	emitter      events.InputEventEmitter // 追加: InputEventEmitter
 }
 
 // NewInputHandler は新しいInputHandlerを作成する
 func NewInputHandler(editor EditorOperations, eventManager *events.EventManager) *InputHandler {
-	return &InputHandler{
+	handler := &InputHandler{
 		keyReader:    NewStandardKeyReader(),
 		editor:       editor,
 		eventManager: eventManager,
+		emitter:      events.NewStandardInputEventEmitter(eventManager),
 	}
+
+	// イベントハンドラを登録
+	handler.setupEventHandlers()
+
+	return handler
+}
+
+// setupEventHandlers はイベントハンドラを設定する
+func (ih *InputHandler) setupEventHandlers() {
+	// イベント購読は残すが、コマンドは生成しない（直接のコマンド実行に任せる）
+	ih.emitter.Subscribe(func(event *events.InputEvent) {
+		// イベントの監視のみを行い、コマンド実行は行わない
+		// 将来的なイベントハンドリングのために残しておく
+	})
 }
 
 // HandleKeypress はキー入力をイベントとして発行する
@@ -260,36 +277,47 @@ func (ih *InputHandler) HandleKeypress() (EditorCommand, error) {
 		return nil, err
 	}
 
-	// コマンドを生成する前にイベントを発行
-	inputEvent := events.NewInputEvent(events.KeyEventType(event.Type), event.Rune, events.Key(event.Key))
-	ih.eventManager.Publish(inputEvent)
+	// イベントを生成（型変換をシンプルに）
+	inputEvent := events.NewInputEvent(
+		events.KeyEventType(event.Type),
+		event.Rune,
+		events.Key(event.Key),
+	)
+	// イベントを発行
+	ih.emitter.EmitInputEvent(inputEvent)
 
-	var command EditorCommand
+	// コマンド処理（イベントタイプに基づいて直接処理）
 	switch event.Type {
 	case KeyEventChar:
 		if event.Rune >= 32 && event.Rune != 127 {
 			if !ih.handleBracketPair(event.Rune) {
-				command = NewInsertCharCommand(ih.editor, event.Rune)
+				return NewInsertCharCommand(ih.editor, event.Rune), nil
 			}
 		}
 	case KeyEventSpecial:
-		command = ih.handleSpecialKey(event.Key)
+		return ih.handleSpecialKey(event.Key), nil
 	case KeyEventControl:
-		command = ih.handleControlKey(event.Key)
+		return ih.handleControlKey(event.Key), nil
 	}
 
-	return command, nil
+	return nil, nil
 }
 
 // createCommandFromEvent はイベントからEditorCommandを生成する
 func (ih *InputHandler) createCommandFromEvent(e *events.InputEvent) EditorCommand {
 	switch e.KeyType {
 	case events.KeyEventChar:
-		return NewInsertCharCommand(ih.editor, e.Rune)
+		if e.Rune >= 32 && e.Rune != 127 {
+			if !ih.handleBracketPair(e.Rune) {
+				return NewInsertCharCommand(ih.editor, e.Rune)
+			}
+		}
 	case events.KeyEventSpecial:
-		return ih.createSpecialKeyCommand(e.SpecialKey)
+		// SpecialKeyの値を直接使用（補正なし）
+		return ih.handleSpecialKey(Key(e.SpecialKey))
 	case events.KeyEventControl:
-		return ih.createControlKeyCommand(e.SpecialKey)
+		// ControlKeyの値を直接使用（補正なし）
+		return ih.handleControlKey(Key(e.SpecialKey))
 	}
 	return nil
 }
@@ -446,7 +474,6 @@ func (ih *InputHandler) hasQuoteInLine(quote rune) bool {
 func (ih *InputHandler) handleSpecialKey(key Key) EditorCommand {
 	switch key {
 	case KeyTab:
-		// タブをスペースに変換
 		return ih.createTabCommand()
 	case KeyShiftTab:
 		return ih.createShiftTabCommand()
