@@ -3,20 +3,23 @@ package editor
 import (
 	"os"
 
+	"github.com/wasya-io/go-kilo/editor/events"
 	"golang.org/x/sys/unix"
 )
 
 // Editor はエディタの状態を管理する構造体
 type Editor struct {
-	term        *terminalState
-	ui          *UI
-	quit        chan struct{}
-	buffer      *Buffer
-	rowOffset   int
-	colOffset   int
-	fileManager *FileManager
-	input       *InputHandler
-	config      *Config
+	term         *terminalState
+	ui           *UI
+	quit         chan struct{}
+	isQuitting   bool
+	buffer       *Buffer
+	rowOffset    int
+	colOffset    int
+	fileManager  *FileManager
+	input        *InputHandler
+	config       *Config
+	eventManager *events.EventManager // 追加: イベントマネージャー
 }
 
 // New は新しいEditorインスタンスを作成する
@@ -35,20 +38,26 @@ func New(testMode bool) (*Editor, error) {
 	screenRows := int(ws.Row)
 	screenCols := int(ws.Col)
 
+	eventManager := events.NewEventManager()
+
 	e := &Editor{
-		ui:        NewUI(screenRows, screenCols),
-		quit:      make(chan struct{}),
-		buffer:    NewBuffer(),
-		rowOffset: 0,
-		colOffset: 0,
-		config:    LoadConfig(),
+		ui:           NewUI(screenRows, screenCols, eventManager), // eventManagerを追加
+		quit:         make(chan struct{}),
+		buffer:       NewBuffer(eventManager), // eventManagerを引数として渡す
+		rowOffset:    0,
+		colOffset:    0,
+		config:       LoadConfig(),
+		eventManager: eventManager,
+		isQuitting:   false,
 	}
 
-	e.fileManager = NewFileManager(e.buffer)
-	e.input = NewInputHandler(e)
+	e.fileManager = NewFileManager(e.buffer, eventManager)
+	e.input = NewInputHandler(e, eventManager)
+
+	// イベントハンドラの登録
+	e.setupEventHandlers()
 
 	if !testMode {
-		// テスト以外の場合のみデフォルトテキストを追加
 		defaultContent := []string{
 			"Hello, Go-Kilo editor!",
 			"Use arrow keys to move cursor.",
@@ -56,7 +65,6 @@ func New(testMode bool) (*Editor, error) {
 		}
 		e.buffer.LoadContent(defaultContent)
 
-		// Rawモードを有効化
 		term, err := enableRawMode()
 		if err != nil {
 			return nil, err
@@ -65,6 +73,94 @@ func New(testMode bool) (*Editor, error) {
 	}
 
 	return e, nil
+}
+
+// setupEventHandlers はイベントハンドラを設定する
+func (e *Editor) setupEventHandlers() {
+	// バッファイベントのハンドラを登録
+	e.eventManager.Subscribe(events.BufferEventType, func(event events.Event) {
+		if bufferEvent, ok := event.(*events.BufferEvent); ok {
+			e.handleBufferEvent(bufferEvent)
+		}
+	})
+
+	// UIイベントのハンドラを登録
+	e.eventManager.Subscribe(events.UIEventType, func(event events.Event) {
+		if uiEvent, ok := event.(*events.UIEvent); ok {
+			e.handleUIEvent(uiEvent)
+		}
+	})
+
+	// ファイルイベントのハンドラを登録
+	e.eventManager.Subscribe(events.FileEventType, func(event events.Event) {
+		if fileEvent, ok := event.(*events.FileEvent); ok {
+			e.handleFileEvent(fileEvent)
+		}
+	})
+}
+
+// handleBufferEvent はバッファイベントを処理する
+func (e *Editor) handleBufferEvent(event *events.BufferEvent) {
+	// イベントの状態チェックのみを行い、バッファの直接操作は行わない
+	if event.Pre == event.Post {
+		return // 状態に変更がない場合は何もしない
+	}
+
+	e.UpdateScroll()
+	// UIイベントを発行（画面更新用）
+	e.publishUIEvent(events.UIRefresh, nil)
+}
+
+// handleUIEvent はUIイベントを処理する
+func (e *Editor) handleUIEvent(event *events.UIEvent) {
+	switch event.SubType {
+	case events.UIRefresh:
+		// 画面の更新のみを行う（新たなイベントは発行しない）
+		e.RefreshScreen()
+	case events.UIScroll:
+		// スクロールイベントの場合は画面の更新のみ
+		e.RefreshScreen()
+	case events.UIStatusMessage:
+		if data, ok := event.Data.(events.StatusMessageData); ok {
+			e.ui.message = data.Message
+			e.ui.messageArgs = make([]interface{}, len(data.Args))
+			copy(e.ui.messageArgs, data.Args)
+			e.RefreshScreen()
+		}
+	}
+}
+
+// handleFileEvent はファイルイベントを処理する
+func (e *Editor) handleFileEvent(event *events.FileEvent) {
+	switch event.SubType {
+	case events.FileOpen:
+		if event.Error != nil {
+			e.setStatusMessage("Error opening file: %v", event.Error)
+		} else {
+			e.setStatusMessage("File loaded: %s", event.Filename)
+		}
+	case events.FileSave:
+		if event.Error != nil {
+			e.setStatusMessage("Error saving file: %v", event.Error)
+		} else {
+			e.setStatusMessage("File saved: %s", event.Filename)
+		}
+	}
+}
+
+// UIイベント関連の型を修正
+type uiEventType string
+
+const (
+	uiRefresh       uiEventType = "refresh"
+	uiScroll        uiEventType = "scroll"
+	uiStatusMessage uiEventType = "status_message"
+)
+
+// publishUIEvent はUIイベントを発行する
+func (e *Editor) publishUIEvent(eventType events.SubEventType, data interface{}) {
+	event := events.NewUIEvent(eventType, data)
+	e.eventManager.Publish(event)
 }
 
 // Cleanup は終了時の後処理を行う
@@ -90,61 +186,48 @@ func (e *Editor) ProcessKeypress() error {
 	}
 
 	if command != nil {
+		// コマンドを実行
 		if err := command.Execute(); err != nil {
 			return err
 		}
+
+		// 画面更新
+		return e.RefreshScreen()
 	}
 
-	return e.RefreshScreen()
-}
-
-// max は2つの整数のうち大きい方を返す
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
+	return nil
 }
 
 // UpdateScroll はカーソル位置に基づいてスクロール位置を更新する
 func (e *Editor) UpdateScroll() {
-	// カーソル位置が画面外に出ないようにスクロール位置を調整
+	// スクロール位置の更新処理
 	if e.buffer.cursor.Y < e.rowOffset {
 		e.rowOffset = e.buffer.cursor.Y
 	}
 
-	// 画面下端から2行分の余裕を持たせる（ステータスバーとメッセージバー用）
 	screenBottom := e.ui.screenRows - 2
-	visibleLines := screenBottom - 1 // 実際に表示可能な行数
+	visibleLines := screenBottom - 1
 
-	// カーソルが画面下端に近づいた場合のスクロール処理
 	if e.buffer.cursor.Y >= e.rowOffset+visibleLines {
-		// カーソル位置を中心にスクロール
 		e.rowOffset = e.buffer.cursor.Y - visibleLines + 1
 	}
 
-	// カーソル行の取得と水平スクロールの処理
 	row := e.buffer.getRow(e.buffer.cursor.Y)
 	if row == nil {
 		return
 	}
 
-	// カーソル位置の表示位置を計算
 	cursorScreenPos := row.OffsetToScreenPosition(e.buffer.cursor.X)
 
-	// 水平スクロールの調整
-	// 左方向のスクロール
 	if cursorScreenPos < e.colOffset {
 		e.colOffset = cursorScreenPos
 	}
 
-	// 右方向のスクロール（画面幅の80%を超えたらスクロール）
 	rightMargin := (e.ui.screenCols * 4) / 5
 	if cursorScreenPos >= e.colOffset+rightMargin {
 		e.colOffset = cursorScreenPos - rightMargin + 1
 	}
 
-	// スクロール位置が有効な範囲内に収まるように調整
 	if e.rowOffset < 0 {
 		e.rowOffset = 0
 	}
@@ -152,7 +235,6 @@ func (e *Editor) UpdateScroll() {
 		e.colOffset = 0
 	}
 
-	// 最大スクロール位置の制限
 	maxRow := max(0, e.buffer.GetLineCount()-1)
 	if e.rowOffset > maxRow {
 		e.rowOffset = maxRow
@@ -166,7 +248,10 @@ func (e *Editor) QuitChan() <-chan struct{} {
 
 // Quit はエディタを終了する
 func (e *Editor) Quit() {
-	close(e.quit)
+	if !e.isQuitting {
+		e.isQuitting = true
+		close(e.quit)
+	}
 }
 
 // OpenFile は指定されたファイルを読み込む
@@ -193,7 +278,11 @@ func (e *Editor) SaveFile() error {
 
 // setStatusMessage はステータスメッセージを設定する（非公開メソッド）
 func (e *Editor) setStatusMessage(format string, args ...interface{}) {
-	e.ui.SetMessage(format, args...)
+	// ステータスメッセージイベントを発行（型キャストを修正）
+	e.publishUIEvent(events.UIStatusMessage, events.StatusMessageData{
+		Message: format,
+		Args:    args,
+	})
 }
 
 // SetStatusMessage はステータスメッセージを設定する（EditorOperations用の公開メソッド）
@@ -236,4 +325,8 @@ func (e *Editor) GetCursor() Cursor {
 
 func (e *Editor) GetContent(lineNum int) string {
 	return e.buffer.GetContent(lineNum)
+}
+
+func (e *Editor) InsertChars(chars []rune) {
+	e.buffer.InsertChars(chars)
 }

@@ -8,6 +8,7 @@ type EditorCommand interface {
 // EditorOperations はInputHandlerが必要とするエディタ操作を定義するインターフェース
 type EditorOperations interface {
 	InsertChar(ch rune)
+	InsertChars(chars []rune) // 追加
 	DeleteChar()
 	MoveCursor(movement CursorMovement)
 	InsertNewline()
@@ -34,6 +35,21 @@ func NewInsertCharCommand(editor EditorOperations, char rune) *InsertCharCommand
 
 func (c *InsertCharCommand) Execute() error {
 	c.editor.InsertChar(c.char)
+	return nil
+}
+
+// InsertCharsCommand は複数の文字を一度に挿入するコマンド
+type InsertCharsCommand struct {
+	editor EditorOperations
+	chars  []rune
+}
+
+func NewInsertCharsCommand(editor EditorOperations, chars ...rune) *InsertCharsCommand {
+	return &InsertCharsCommand{editor: editor, chars: chars}
+}
+
+func (c *InsertCharsCommand) Execute() error {
+	c.editor.InsertChars(c.chars)
 	return nil
 }
 

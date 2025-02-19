@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"unicode/utf8"
+
+	"github.com/wasya-io/go-kilo/editor/events"
 )
 
 // KeyEvent はキー入力イベントを表す
@@ -59,116 +61,139 @@ func NewStandardKeyReader() *StandardKeyReader {
 
 // ReadKey は標準入力から1つのキーイベントを読み取る
 func (kr *StandardKeyReader) ReadKey() (KeyEvent, error) {
-	// バッファにイベントがある場合は、それを返す
 	if len(kr.inputBuffer) > 0 {
 		event := kr.inputBuffer[0]
 		kr.inputBuffer = kr.inputBuffer[1:]
 		return event, nil
 	}
 
-	// 最初の読み取り
+	// より大きなバッファを使用して一度に読み取る
 	buf := make([]byte, 32)
-	n, err := os.Stdin.Read(buf)
+	n, err := os.Stdin.Read(buf[:])
 	if err != nil {
-		return KeyEvent{}, err
+		// Ctrl+Cが押された場合、KeyCtrlCイベントを返す
+		if err == os.ErrInvalid || err.Error() == "inappropriate ioctl for device" {
+			return KeyEvent{Type: KeyEventControl, Key: KeyCtrlC}, nil
+		}
+		return KeyEvent{}, fmt.Errorf("input error: %v", err)
+	}
+	if n == 0 {
+		return KeyEvent{}, fmt.Errorf("no input")
 	}
 
-	// Shift+Tab の処理（エスケープシーケンス '[Z' を検出）
-	if n >= 3 && buf[0] == '\x1b' && buf[1] == '[' && buf[2] == 'Z' {
-		return KeyEvent{Type: KeyEventSpecial, Key: KeyShiftTab}, nil
+	// Ctrl+C（ASCII値3）の直接的な検出
+	if buf[0] == 3 {
+		return KeyEvent{Type: KeyEventControl, Key: KeyCtrlC}, nil
 	}
 
-	// タブキーの処理
-	if n == 1 && buf[0] == '\t' {
-		return KeyEvent{Type: KeyEventSpecial, Key: KeyTab}, nil
-	}
-
-	// エスケープシーケンスの処理
-	if n > 0 && buf[0] == '\x1b' {
-		return kr.handleEscapeSequence(buf[:n])
-	}
-
-	// バックスペースの処理
-	if n == 1 && buf[0] == 127 {
-		return KeyEvent{Type: KeyEventSpecial, Key: KeyBackspace}, nil
+	// エスケープシーケンスの検出
+	if buf[0] == '\x1b' {
+		// エスケープシーケンスの完全な読み取りを待つ
+		if n >= 3 && buf[1] == '[' {
+			switch buf[2] {
+			case 'A':
+				return KeyEvent{Type: KeyEventSpecial, Key: KeyArrowUp}, nil
+			case 'B':
+				return KeyEvent{Type: KeyEventSpecial, Key: KeyArrowDown}, nil
+			case 'C':
+				return KeyEvent{Type: KeyEventSpecial, Key: KeyArrowRight}, nil
+			case 'D':
+				return KeyEvent{Type: KeyEventSpecial, Key: KeyArrowLeft}, nil
+			case 'Z':
+				return KeyEvent{Type: KeyEventSpecial, Key: KeyShiftTab}, nil
+			}
+		}
+		// エスケープキー単体として処理
+		return KeyEvent{Type: KeyEventSpecial, Key: KeyEsc}, nil
 	}
 
 	// 制御キーの処理
-	if n == 1 && buf[0] < 32 {
-		switch buf[0] {
-		case 'q' & 0x1f:
-			return KeyEvent{Type: KeyEventControl, Key: KeyCtrlQ}, nil
-		case 'c' & 0x1f:
-			return KeyEvent{Type: KeyEventControl, Key: KeyCtrlC}, nil
-		case 's' & 0x1f:
-			return KeyEvent{Type: KeyEventControl, Key: KeyCtrlS}, nil
-		case '\r':
-			return KeyEvent{Type: KeyEventSpecial, Key: KeyEnter}, nil
-		}
+	switch buf[0] {
+	case 3: // Ctrl-C
+		return KeyEvent{Type: KeyEventControl, Key: KeyCtrlC}, nil
+	case 17: // Ctrl-Q
+		return KeyEvent{Type: KeyEventControl, Key: KeyCtrlQ}, nil
+	case 19: // Ctrl-S
+		return KeyEvent{Type: KeyEventControl, Key: KeyCtrlS}, nil
+	case 127: // Backspace
+		return KeyEvent{Type: KeyEventSpecial, Key: KeyBackspace}, nil
+	case '\t': // Tab
+		return KeyEvent{Type: KeyEventSpecial, Key: KeyTab}, nil
+	case '\r': // Enter
+		return KeyEvent{Type: KeyEventSpecial, Key: KeyEnter}, nil
 	}
 
-	// マルチバイト文字の処理
-	data := buf[:n]
-	processed := 0
-	for processed < len(data) {
-		r, size := utf8.DecodeRune(data[processed:])
-		if r == utf8.RuneError {
-			if size == 1 {
-				// 不完全なマルチバイト文字の場合、追加バイトを読み取る
-				tmp := make([]byte, 4)
-				n, err = os.Stdin.Read(tmp)
-				if err != nil {
-					return KeyEvent{}, err
+	// UTF-8文字の処理
+	if (buf[0] & 0x80) != 0 {
+		// マルチバイト文字の完全な読み取りを試みる
+		size := 1
+		if (buf[0] & 0xE0) == 0xC0 {
+			size = 2
+		} else if (buf[0] & 0xF0) == 0xE0 {
+			size = 3
+		} else if (buf[0] & 0xF8) == 0xF0 {
+			size = 4
+		}
+
+		// 必要なバイト数が揃っているか確認
+		if n >= size {
+			r, _ := utf8.DecodeRune(buf[:size])
+			if r != utf8.RuneError {
+				// 残りのバイトがある場合はバッファに保存
+				if n > size {
+					rest := buf[size:n]
+					for len(rest) > 0 {
+						r, size := utf8.DecodeRune(rest)
+						if r == utf8.RuneError {
+							break
+						}
+						kr.inputBuffer = append(kr.inputBuffer, KeyEvent{Type: KeyEventChar, Rune: r})
+						rest = rest[size:]
+					}
 				}
-				data = append(data, tmp[:n]...)
-				continue
+				return KeyEvent{Type: KeyEventChar, Rune: r}, nil
 			}
-			return KeyEvent{}, fmt.Errorf("invalid input sequence")
 		}
-
-		// 有効な文字の場合はバッファに追加
-		if utf8.ValidRune(r) && (r >= 32 || r == '\t') {
-			kr.inputBuffer = append(kr.inputBuffer, KeyEvent{Type: KeyEventChar, Rune: r})
-		}
-		processed += size
 	}
 
-	// バッファから1つ取り出して返す
-	if len(kr.inputBuffer) > 0 {
-		event := kr.inputBuffer[0]
-		kr.inputBuffer = kr.inputBuffer[1:]
-		return event, nil
+	// ASCII文字の処理
+	if buf[0] >= 32 && buf[0] < 127 {
+		// 残りのバイトがある場合はバッファに保存
+		if n > 1 {
+			for i := 1; i < n; i++ {
+				if buf[i] >= 32 && buf[i] < 127 {
+					kr.inputBuffer = append(kr.inputBuffer, KeyEvent{Type: KeyEventChar, Rune: rune(buf[i])})
+				}
+			}
+		}
+		return KeyEvent{Type: KeyEventChar, Rune: rune(buf[0])}, nil
 	}
 
-	return KeyEvent{}, fmt.Errorf("no valid input")
+	return KeyEvent{}, fmt.Errorf("unknown input")
 }
 
-// handleEscapeSequence はエスケープシーケンスを解析してKeyEventに変換する
+// handleEscapeSequence はエスケープシーケンスを処理する
 func (kr *StandardKeyReader) handleEscapeSequence(buf []byte) (KeyEvent, error) {
 	// ESCキー単体の場合の処理
 	if len(buf) == 1 {
 		return KeyEvent{Type: KeyEventSpecial, Key: KeyEsc}, nil
 	}
 
-	// エスケープシーケンスの場合
-	n := len(buf)
-	if n < 3 {
-		// より柔軟な読み取り処理
-		seq := make([]byte, 3-n)
-		nseq, err := os.Stdin.Read(seq)
-		if err != nil {
-			return KeyEvent{}, err
-		}
-		// タイムアウトまたは読み取りエラーの場合はESCキーとして扱う
-		if nseq == 0 {
+	// 矢印キーの場合、常に3バイトのシーケンスを期待
+	moreBuf := make([]byte, 3)
+	copied := copy(moreBuf, buf)
+	if copied < 3 {
+		n, err := os.Stdin.Read(moreBuf[copied:])
+		if err != nil || n == 0 {
 			return KeyEvent{Type: KeyEventSpecial, Key: KeyEsc}, nil
 		}
-		// バッファを結合
-		buf = append(buf, seq[:nseq]...)
+		// bufの残りを上書き
+		copy(moreBuf[copied:], moreBuf[copied:copied+n])
 	}
 
-	if buf[1] == '[' {
-		switch buf[2] {
+	// 矢印キーの処理
+	if moreBuf[0] == '\x1b' && moreBuf[1] == '[' {
+		switch moreBuf[2] {
 		case 'A':
 			return KeyEvent{Type: KeyEventSpecial, Key: KeyArrowUp}, nil
 		case 'B':
@@ -180,56 +205,179 @@ func (kr *StandardKeyReader) handleEscapeSequence(buf []byte) (KeyEvent, error) 
 		}
 	}
 
-	// 未知のエスケープシーケンスの場合はESCキーとして扱う
 	return KeyEvent{Type: KeyEventSpecial, Key: KeyEsc}, nil
 }
 
-// min は2つの整数のうち小さい方を返す
-func min(a, b int) int {
-	if a < b {
-		return a
+// processInputBuffer は入力バッファを処理する
+func (kr *StandardKeyReader) processInputBuffer(buf []byte) (KeyEvent, error) {
+	if len(buf) == 0 {
+		return KeyEvent{}, fmt.Errorf("empty input")
 	}
-	return b
+
+	// UTF-8文字のデコード
+	r, size := utf8.DecodeRune(buf)
+	if r == utf8.RuneError {
+		return KeyEvent{}, fmt.Errorf("invalid UTF-8 sequence")
+	}
+
+	// 残りのバッファがある場合は保存
+	if size < len(buf) {
+		kr.inputBuffer = make([]KeyEvent, 0)
+		rest := buf[size:]
+		for len(rest) > 0 {
+			r, size := utf8.DecodeRune(rest)
+			if r == utf8.RuneError {
+				break
+			}
+			kr.inputBuffer = append(kr.inputBuffer, KeyEvent{Type: KeyEventChar, Rune: r})
+			rest = rest[size:]
+		}
+	}
+
+	return KeyEvent{Type: KeyEventChar, Rune: r}, nil
 }
 
 // InputHandler はキー入力とその処理を管理する
 type InputHandler struct {
-	keyReader KeyReader
-	editor    EditorOperations
+	keyReader    KeyReader
+	editor       EditorOperations
+	eventManager *events.EventManager
 }
 
 // NewInputHandler は新しいInputHandlerを作成する
-func NewInputHandler(editor EditorOperations) *InputHandler {
+func NewInputHandler(editor EditorOperations, eventManager *events.EventManager) *InputHandler {
 	return &InputHandler{
-		keyReader: NewStandardKeyReader(),
-		editor:    editor,
+		keyReader:    NewStandardKeyReader(),
+		editor:       editor,
+		eventManager: eventManager,
 	}
 }
 
-// HandleKeypress はキー入力からコマンドを生成する
+// HandleKeypress はキー入力をイベントとして発行する
 func (ih *InputHandler) HandleKeypress() (EditorCommand, error) {
 	event, err := ih.keyReader.ReadKey()
 	if err != nil {
 		return nil, err
 	}
 
+	// コマンドを生成する前にイベントを発行
+	inputEvent := events.NewInputEvent(events.KeyEventType(event.Type), event.Rune, events.Key(event.Key))
+	ih.eventManager.Publish(inputEvent)
+
+	var command EditorCommand
 	switch event.Type {
 	case KeyEventChar:
-		// 括弧類の補完処理
-		if shouldAutoClose := ih.handleBracketPair(event.Rune); !shouldAutoClose {
-			// 通常の文字入力を処理
-			return NewInsertCharCommand(ih.editor, event.Rune), nil
+		if event.Rune >= 32 && event.Rune != 127 {
+			if !ih.handleBracketPair(event.Rune) {
+				command = NewInsertCharCommand(ih.editor, event.Rune)
+			}
 		}
-		return nil, nil
 	case KeyEventSpecial:
-		// 特殊キーを処理
-		return ih.handleSpecialKey(event.Key)
+		command = ih.handleSpecialKey(event.Key)
 	case KeyEventControl:
-		// コントロールキーを処理
-		return ih.handleControlKey(event.Key)
+		command = ih.handleControlKey(event.Key)
 	}
 
-	return nil, nil
+	return command, nil
+}
+
+// createCommandFromEvent はイベントからEditorCommandを生成する
+func (ih *InputHandler) createCommandFromEvent(e *events.InputEvent) EditorCommand {
+	switch e.KeyType {
+	case events.KeyEventChar:
+		return NewInsertCharCommand(ih.editor, e.Rune)
+	case events.KeyEventSpecial:
+		return ih.createSpecialKeyCommand(e.SpecialKey)
+	case events.KeyEventControl:
+		return ih.createControlKeyCommand(e.SpecialKey)
+	}
+	return nil
+}
+
+// createSpecialKeyCommand は特殊キーに対応するコマンドを生成する
+func (ih *InputHandler) createSpecialKeyCommand(key events.Key) EditorCommand {
+	switch key {
+	case events.KeyTab:
+		return ih.createTabCommand()
+	case events.KeyShiftTab:
+		return ih.createShiftTabCommand()
+	case events.KeyArrowUp:
+		return NewMoveCursorCommand(ih.editor, CursorUp)
+	case events.KeyArrowDown:
+		return NewMoveCursorCommand(ih.editor, CursorDown)
+	case events.KeyArrowRight:
+		return NewMoveCursorCommand(ih.editor, CursorRight)
+	case events.KeyArrowLeft:
+		return NewMoveCursorCommand(ih.editor, CursorLeft)
+	case events.KeyBackspace:
+		return NewDeleteCharCommand(ih.editor)
+	case events.KeyEnter:
+		return NewInsertNewlineCommand(ih.editor)
+	}
+	return nil
+}
+
+// createControlKeyCommand は制御キーに対応するコマンドを生成する
+func (ih *InputHandler) createControlKeyCommand(key events.Key) EditorCommand {
+	switch key {
+	case events.KeyCtrlQ, events.KeyCtrlC:
+		return NewQuitCommand(ih.editor) // 同じように終了処理を行う
+	case events.KeyCtrlS:
+		return NewSaveCommand(ih.editor)
+	}
+	return nil
+}
+
+// createTabCommand はタブコマンドを生成する
+func (ih *InputHandler) createTabCommand() EditorCommand {
+	tabWidth := ih.editor.GetConfig().TabWidth
+	spaces := make([]rune, tabWidth)
+	for i := 0; i < tabWidth; i++ {
+		spaces[i] = ' '
+	}
+	return NewInsertCharsCommand(ih.editor, spaces...)
+}
+
+// createShiftTabCommand はShift+Tabコマンドを生成する
+func (ih *InputHandler) createShiftTabCommand() EditorCommand {
+	return NewCompositeCommand(func() error {
+		cursor := ih.editor.GetCursor()
+		if cursor.X == 0 {
+			return nil
+		}
+
+		content := ih.editor.GetContent(cursor.Y)
+		if content == "" {
+			return nil
+		}
+
+		runes := []rune(content)
+		spaceCount := 0
+		pos := cursor.X - 1
+		for pos >= 0 && runes[pos] == ' ' {
+			spaceCount++
+			pos--
+		}
+
+		if spaceCount == 0 {
+			return nil
+		}
+
+		tabWidth := ih.editor.GetConfig().TabWidth
+		targetSpaces := (spaceCount - 1) / tabWidth * tabWidth
+		if targetSpaces == spaceCount {
+			targetSpaces = ((spaceCount-1)/tabWidth - 1) * tabWidth
+		}
+		targetSpaces = max(0, targetSpaces)
+
+		deleteCount := min(spaceCount-targetSpaces, spaceCount)
+		for i := 0; i < deleteCount; i++ {
+			if err := NewDeleteCharCommand(ih.editor).Execute(); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 // handleBracketPair は括弧や引用符の補完処理を行う
@@ -261,6 +409,21 @@ func (ih *InputHandler) handleBracketPair(r rune) bool {
 	return true
 }
 
+// CompositeCommand は複数のコマンドを1つのコマンドとして扱うための構造体
+type CompositeCommand struct {
+	execute func() error
+}
+
+// NewCompositeCommand は新しいCompositeCommandを作成する
+func NewCompositeCommand(execute func() error) *CompositeCommand {
+	return &CompositeCommand{execute: execute}
+}
+
+// Execute はコマンドを実行する
+func (c *CompositeCommand) Execute() error {
+	return c.execute()
+}
+
 // hasQuoteInLine は現在の行の左側に指定された引用符があるかどうかを確認する
 func (ih *InputHandler) hasQuoteInLine(quote rune) bool {
 	cursor := ih.editor.GetCursor()
@@ -280,80 +443,38 @@ func (ih *InputHandler) hasQuoteInLine(quote rune) bool {
 }
 
 // handleSpecialKey は特殊キーの処理を行う
-func (ih *InputHandler) handleSpecialKey(key Key) (EditorCommand, error) {
+func (ih *InputHandler) handleSpecialKey(key Key) EditorCommand {
 	switch key {
 	case KeyTab:
-		// タブをスペースに変換する複合コマンドを作成
-		tabWidth := ih.editor.GetConfig().TabWidth
-		for i := 0; i < tabWidth; i++ {
-			NewInsertCharCommand(ih.editor, ' ').Execute()
-		}
-		return nil, nil
+		// タブをスペースに変換
+		return ih.createTabCommand()
 	case KeyShiftTab:
-		return ih.handleShiftTab(), nil
+		return ih.createShiftTabCommand()
 	case KeyArrowUp:
-		return NewMoveCursorCommand(ih.editor, CursorUp), nil
+		return NewMoveCursorCommand(ih.editor, CursorUp)
 	case KeyArrowDown:
-		return NewMoveCursorCommand(ih.editor, CursorDown), nil
+		return NewMoveCursorCommand(ih.editor, CursorDown)
 	case KeyArrowRight:
-		return NewMoveCursorCommand(ih.editor, CursorRight), nil
+		return NewMoveCursorCommand(ih.editor, CursorRight)
 	case KeyArrowLeft:
-		return NewMoveCursorCommand(ih.editor, CursorLeft), nil
+		return NewMoveCursorCommand(ih.editor, CursorLeft)
 	case KeyBackspace:
-		return NewDeleteCharCommand(ih.editor), nil
+		return NewDeleteCharCommand(ih.editor)
 	case KeyEnter:
-		return NewInsertNewlineCommand(ih.editor), nil
-	}
-	return nil, nil
-}
-
-// handleShiftTab は Shift+Tab の処理を行う
-func (ih *InputHandler) handleShiftTab() EditorCommand {
-	cursor := ih.editor.GetCursor()
-	if cursor.X == 0 {
-		return nil
-	}
-
-	content := ih.editor.GetContent(cursor.Y)
-	if content == "" {
-		return nil
-	}
-
-	runes := []rune(content)
-	spaceCount := 0
-	pos := cursor.X - 1
-	for pos >= 0 && runes[pos] == ' ' {
-		spaceCount++
-		pos--
-	}
-
-	if spaceCount == 0 {
-		return nil
-	}
-
-	tabWidth := ih.editor.GetConfig().TabWidth
-	targetSpaces := (spaceCount - 1) / tabWidth * tabWidth
-	if targetSpaces == spaceCount {
-		targetSpaces = ((spaceCount-1)/tabWidth - 1) * tabWidth
-	}
-	targetSpaces = max(0, targetSpaces)
-
-	deleteCount := min(spaceCount-targetSpaces, spaceCount)
-	for i := 0; i < deleteCount; i++ {
-		NewDeleteCharCommand(ih.editor).Execute()
+		return NewInsertNewlineCommand(ih.editor)
 	}
 	return nil
 }
 
 // handleControlKey は制御キーの処理を行う
-func (ih *InputHandler) handleControlKey(key Key) (EditorCommand, error) {
+func (ih *InputHandler) handleControlKey(key Key) EditorCommand {
 	switch key {
 	case KeyCtrlQ, KeyCtrlC:
-		return NewQuitCommand(ih.editor), nil
+		return NewQuitCommand(ih.editor) // 同じように終了処理を行う
 	case KeyCtrlS:
-		return NewSaveCommand(ih.editor), nil
+		return NewSaveCommand(ih.editor)
 	}
-	return nil, nil
+	return nil
 }
 
 // SetKeyReader はキー入力読み取りインターフェースを設定する

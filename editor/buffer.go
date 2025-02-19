@@ -1,11 +1,14 @@
 package editor
 
+import "github.com/wasya-io/go-kilo/editor/events"
+
 // Buffer はテキストバッファを管理する構造体
 type Buffer struct {
-	lines    []string
-	cursor   Cursor
-	isDirty  bool
-	rowCache map[int]*Row // 行ごとのキャッシュを追加
+	lines        []string
+	cursor       Cursor
+	isDirty      bool
+	rowCache     map[int]*Row
+	eventManager *events.EventManager
 }
 
 // Cursor はカーソル位置を管理する構造体
@@ -14,21 +17,27 @@ type Cursor struct {
 }
 
 // NewBuffer は新しいBufferインスタンスを作成する
-func NewBuffer() *Buffer {
+func NewBuffer(eventManager *events.EventManager) *Buffer {
 	return &Buffer{
-		lines:    make([]string, 0),
-		cursor:   Cursor{X: 0, Y: 0},
-		isDirty:  false,
-		rowCache: make(map[int]*Row),
+		lines:        make([]string, 0),
+		cursor:       Cursor{X: 0, Y: 0},
+		isDirty:      false,
+		rowCache:     make(map[int]*Row),
+		eventManager: eventManager,
 	}
 }
 
 // LoadContent はバッファに内容をロードする
 func (b *Buffer) LoadContent(lines []string) {
+	prevState := b.getCurrentState()
+
 	b.lines = lines
 	b.isDirty = false
 	b.cursor = Cursor{X: 0, Y: 0}
-	b.rowCache = make(map[int]*Row) // キャッシュをクリア
+	b.rowCache = make(map[int]*Row)
+
+	// バッファ内容変更イベントを発行
+	b.publishBufferEvent(events.BufferLoadContent, b.cursor, nil, prevState)
 }
 
 // GetContent は指定された行の内容を返す
@@ -53,6 +62,8 @@ func (b *Buffer) GetAllContent() []string {
 
 // InsertChar は現在のカーソル位置に文字を挿入する
 func (b *Buffer) InsertChar(ch rune) {
+	prevState := b.getCurrentState()
+
 	// 空のバッファの場合、最初の行を作成
 	if len(b.lines) == 0 {
 		b.lines = append(b.lines, "")
@@ -65,27 +76,50 @@ func (b *Buffer) InsertChar(ch rune) {
 		return
 	}
 
-	// 現在の行をルーンスライスに変換
-	runes := []rune(row.GetContent())
-
-	// カーソル位置が範囲外の場合は調整
-	if b.cursor.X > len(runes) {
-		b.cursor.X = len(runes)
-	}
-
-	// 文字を挿入（ルーンスライスを使用）
-	newRunes := make([]rune, 0, len(runes)+1)
-	newRunes = append(newRunes, runes[:b.cursor.X]...)
-	newRunes = append(newRunes, ch)
-	newRunes = append(newRunes, runes[b.cursor.X:]...)
-
-	// 行を更新
-	b.lines[b.cursor.Y] = string(newRunes)
+	// 文字を挿入
+	row.InsertChar(b.cursor.X, ch)
+	b.lines[b.cursor.Y] = row.GetContent()
 	delete(b.rowCache, b.cursor.Y)
-
-	// カーソル位置を更新
 	b.cursor.X++
 	b.isDirty = true
+
+	// イベントを発行
+	b.publishBufferEvent(events.BufferInsertChar, b.cursor, ch, prevState)
+}
+
+// InsertChars は複数の文字を一度に挿入する
+func (b *Buffer) InsertChars(chars []rune) {
+	if len(chars) == 0 {
+		return
+	}
+
+	prevState := b.getCurrentState()
+
+	// 空のバッファの場合、最初の行を作成
+	if len(b.lines) == 0 {
+		b.lines = append(b.lines, "")
+		b.rowCache = make(map[int]*Row)
+	}
+
+	// 現在の行のRowオブジェクトを取得
+	row := b.getRow(b.cursor.Y)
+	if row == nil {
+		return
+	}
+
+	// すべての文字を現在の行に挿入
+	for _, ch := range chars {
+		row.InsertChar(b.cursor.X, ch)
+		b.cursor.X++
+	}
+
+	// 行の内容を更新
+	b.lines[b.cursor.Y] = row.GetContent()
+	delete(b.rowCache, b.cursor.Y)
+	b.isDirty = true
+
+	// 一度だけイベントを発行
+	b.publishBufferEvent(events.BufferInsertChar, b.cursor, chars, prevState)
 }
 
 // DeleteChar はカーソル位置の文字を削除する
@@ -94,44 +128,32 @@ func (b *Buffer) DeleteChar() {
 		return
 	}
 
-	// 現在の行の取得
+	// カーソルが行頭にある場合
 	if b.cursor.X == 0 {
-		// カーソルが行頭の場合
 		if b.cursor.Y > 0 {
-			// 前の行に結合する
+			// 前の行に結合する処理
 			prevLine := b.lines[b.cursor.Y-1]
 			currLine := b.lines[b.cursor.Y]
-
-			// 前の行と現在の行を結合
-			b.lines[b.cursor.Y-1] = prevLine + currLine
-
-			// 行を削除（スライスを縮める）
-			if b.cursor.Y < len(b.lines)-1 {
-				// 後ろの行を前に詰める
-				b.lines = append(b.lines[:b.cursor.Y], b.lines[b.cursor.Y+1:]...)
-			} else {
-				// 最終行の場合は単純に切り詰める
-				b.lines = b.lines[:b.cursor.Y]
-			}
-
-			// カーソル位置を更新
+			// カーソルは前の行の末尾に移動
 			b.cursor.Y--
 			b.cursor.X = len([]rune(prevLine))
-
+			// 行を結合
+			b.lines[b.cursor.Y] = prevLine + currLine
+			// 現在の行を削除
+			b.lines = append(b.lines[:b.cursor.Y+1], b.lines[b.cursor.Y+2:]...)
 			// キャッシュをクリア
-			b.rowCache = make(map[int]*Row)
+			delete(b.rowCache, b.cursor.Y)
+			delete(b.rowCache, b.cursor.Y+1)
 			b.isDirty = true
 		}
 	} else {
-		// 行の途中の場合
-		currLine := b.lines[b.cursor.Y]
-		runes := []rune(currLine)
-
-		if b.cursor.X <= len(runes) {
-			// カーソル位置の文字を削除
-			b.cursor.X--
-			b.lines[b.cursor.Y] = string(append(runes[:b.cursor.X], runes[b.cursor.X+1:]...))
+		// カーソル位置の前の文字を削除
+		row := b.getRow(b.cursor.Y)
+		if row != nil && b.cursor.X > 0 {
+			row.DeleteChar(b.cursor.X - 1)
+			b.lines[b.cursor.Y] = row.GetContent()
 			delete(b.rowCache, b.cursor.Y)
+			b.cursor.X--
 			b.isDirty = true
 		}
 	}
@@ -143,7 +165,7 @@ func (b *Buffer) getRow(y int) *Row {
 		return nil
 	}
 
-	if row, ok := b.rowCache[y]; ok {
+	if row, ok := b.rowCache[y]; ok && row != nil {
 		return row
 	}
 
@@ -165,6 +187,7 @@ func (b *Buffer) MoveCursor(movement CursorMovement) {
 	switch movement {
 	case CursorLeft:
 		if b.cursor.X > 0 {
+			// カーソルを1文字分左に移動
 			b.cursor.X--
 		} else if b.cursor.Y > 0 {
 			b.cursor.Y--
@@ -176,6 +199,7 @@ func (b *Buffer) MoveCursor(movement CursorMovement) {
 	case CursorRight:
 		maxX := currentRow.GetRuneCount()
 		if b.cursor.X < maxX {
+			// カーソルを1文字分右に移動
 			b.cursor.X++
 		} else if b.cursor.Y < len(b.lines)-1 {
 			b.cursor.Y++
@@ -183,28 +207,18 @@ func (b *Buffer) MoveCursor(movement CursorMovement) {
 		}
 	case CursorUp:
 		if b.cursor.Y > 0 {
-			// 現在のカーソル位置の表示位置を取得
-			currentScreenPos := currentRow.OffsetToScreenPosition(b.cursor.X)
-
-			// 上の行に移動
 			b.cursor.Y--
 			targetRow := b.getRow(b.cursor.Y)
 			if targetRow != nil {
-				// 同じ表示位置に最も近い文字位置を探す
-				b.cursor.X = targetRow.ScreenPositionToOffset(currentScreenPos)
+				b.cursor.X = min(b.cursor.X, targetRow.GetRuneCount())
 			}
 		}
 	case CursorDown:
 		if b.cursor.Y < len(b.lines)-1 {
-			// 現在のカーソル位置の表示位置を取得
-			currentScreenPos := currentRow.OffsetToScreenPosition(b.cursor.X)
-
-			// 下の行に移動
 			b.cursor.Y++
 			targetRow := b.getRow(b.cursor.Y)
 			if targetRow != nil {
-				// 同じ表示位置に最も近い文字位置を探す
-				b.cursor.X = targetRow.ScreenPositionToOffset(currentScreenPos)
+				b.cursor.X = min(b.cursor.X, targetRow.GetRuneCount())
 			}
 		}
 	}
@@ -314,20 +328,70 @@ func (b *Buffer) SetDirty(dirty bool) {
 	b.isDirty = dirty
 }
 
+// getCurrentState は現在のバッファ状態を取得する
+func (b *Buffer) getCurrentState() events.BufferState {
+	var content string
+	if b.cursor.Y < len(b.lines) {
+		content = b.lines[b.cursor.Y]
+	}
+	return events.BufferState{
+		Content: content,
+		IsDirty: b.isDirty,
+		CursorPos: events.Position{
+			X: b.cursor.X,
+			Y: b.cursor.Y,
+		},
+	}
+}
+
+// publishBufferEvent はバッファイベントを発行する
+func (b *Buffer) publishBufferEvent(op events.BufferOperationType, pos Cursor, data interface{}, prevState events.BufferState) {
+	if b.eventManager == nil {
+		return
+	}
+
+	currentState := b.getCurrentState()
+	// 状態が実際に変更された場合のみイベントを発行
+	if prevState != currentState {
+		event := events.NewBufferEvent(
+			op,
+			events.Position{X: pos.X, Y: pos.Y},
+			data,
+			prevState,
+			currentState,
+		)
+		b.eventManager.Publish(event)
+	}
+}
+
 // Row は1行のテキストデータと関連情報を保持する
 type Row struct {
-	chars      string // 実際の文字列データ
-	runes      []rune // 文字列をルーンに分解したもの
-	widths     []int  // 各文字の表示幅
-	positions  []int  // 各文字の表示位置（累積幅）
-	totalWidth int    // 行全体の表示幅
+	chars      string
+	runeSlice  []rune
+	widths     []int
+	positions  []int
+	totalWidth int
 }
 
 // NewRow は新しいRow構造体を作成する
 func NewRow(chars string) *Row {
+	if chars == "" {
+		return &Row{
+			chars:      "",
+			runeSlice:  []rune{},
+			widths:     []int{},
+			positions:  []int{0}, // 空の行でも最初の位置（0）は必要
+			totalWidth: 0,
+		}
+	}
+
+	runeSlice := []rune(chars)
 	r := &Row{
-		chars: chars,
-		runes: []rune(chars),
+		chars:      chars,
+		runeSlice:  runeSlice,
+		widths:     make([]int, len(runeSlice)),
+		positions:  make([]int, len(runeSlice)+1),
+		totalWidth: 0,
 	}
 	r.updateWidths()
 	return r
@@ -335,18 +399,35 @@ func NewRow(chars string) *Row {
 
 // updateWidths は行の文字幅情報を更新する
 func (r *Row) updateWidths() {
-	r.runes = []rune(r.chars)
-	r.widths = make([]int, len(r.runes))
-	r.positions = make([]int, len(r.runes)+1)
-	r.totalWidth = 0
+	// runeSliceがnilの場合は初期化
+	if r.runeSlice == nil {
+		r.runeSlice = []rune(r.chars)
+	}
 
-	for i, ch := range r.runes {
+	// widthsとpositionsの長さを確認し、必要に応じて再割り当て
+	if len(r.widths) != len(r.runeSlice) {
+		r.widths = make([]int, len(r.runeSlice))
+	}
+	if len(r.positions) != len(r.runeSlice)+1 {
+		r.positions = make([]int, len(r.runeSlice)+1)
+	}
+
+	r.totalWidth = 0
+	for i, ch := range r.runeSlice {
 		w := getCharWidth(ch)
 		r.widths[i] = w
 		r.positions[i] = r.totalWidth
 		r.totalWidth += w
 	}
-	r.positions[len(r.runes)] = r.totalWidth // 最後の位置も記録
+	r.positions[len(r.runeSlice)] = r.totalWidth
+
+	// 一貫性チェック
+	if len(r.runeSlice) != len(r.widths) || len(r.positions) != len(r.runeSlice)+1 {
+		// 長さの不整合を修正
+		r.widths = make([]int, len(r.runeSlice))
+		r.positions = make([]int, len(r.runeSlice)+1)
+		r.updateWidths() // 再帰呼び出しは1回限り
+	}
 }
 
 // ScreenPositionToOffset は画面上の位置から文字列中のオフセットを取得する
@@ -357,7 +438,7 @@ func (r *Row) ScreenPositionToOffset(screenPos int) int {
 
 	// 画面位置が行の最後を超える場合は最後の文字の位置を返す
 	if screenPos >= r.totalWidth {
-		return len(r.runes)
+		return len(r.runeSlice)
 	}
 	if screenPos < 0 {
 		return 0
@@ -383,7 +464,7 @@ func (r *Row) ScreenPositionToOffset(screenPos int) int {
 		}
 	}
 
-	return len(r.runes)
+	return len(r.runeSlice)
 }
 
 // OffsetToScreenPosition は文字列中のオフセットから画面上の位置を取得する
@@ -391,7 +472,7 @@ func (r *Row) OffsetToScreenPosition(offset int) int {
 	if offset < 0 {
 		return 0
 	}
-	if offset >= len(r.runes) {
+	if offset >= len(r.runeSlice) {
 		return r.totalWidth
 	}
 	return r.positions[offset]
@@ -399,7 +480,7 @@ func (r *Row) OffsetToScreenPosition(offset int) int {
 
 // GetRuneCount は行の文字数を返す
 func (r *Row) GetRuneCount() int {
-	return len(r.runes)
+	return len(r.runeSlice)
 }
 
 // GetContent は行の内容を文字列として返す
@@ -409,10 +490,10 @@ func (r *Row) GetContent() string {
 
 // GetRuneAt は指定された位置のルーンを返す
 func (r *Row) GetRuneAt(offset int) (rune, bool) {
-	if offset < 0 || offset >= len(r.runes) {
+	if offset < 0 || offset >= len(r.runeSlice) {
 		return 0, false
 	}
-	return r.runes[offset], true
+	return r.runeSlice[offset], true
 }
 
 // GetRuneWidth は指定された位置の文字の表示幅を返す
@@ -437,12 +518,12 @@ func (r *Row) InsertChar(at int, ch rune) {
 
 // DeleteChar は指定位置の文字を削除する
 func (r *Row) DeleteChar(at int) {
-	runes := []rune(r.chars)
-	if at >= len(runes) {
+	if at < 0 || at >= len(r.runeSlice) {
 		return
 	}
 
-	r.chars = string(append(runes[:at], runes[at+1:]...))
+	r.runeSlice = append(r.runeSlice[:at], r.runeSlice[at+1:]...)
+	r.chars = string(r.runeSlice)
 	r.updateWidths()
 }
 

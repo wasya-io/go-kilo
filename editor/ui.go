@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/wasya-io/go-kilo/editor/events"
 )
 
 // UI は画面表示を管理する構造体
@@ -12,16 +14,60 @@ type UI struct {
 	screenCols    int
 	message       string
 	messageArgs   []interface{}
-	lastColOffset int // 前回のcolOffsetを保存
+	lastColOffset int                  // 前回のcolOffsetを保存
+	eventManager  *events.EventManager // 追加：イベントマネージャー
+	needsRefresh  bool                 // 追加：画面更新が必要かどうかのフラグ
 }
 
 // NewUI は新しいUIインスタンスを作成する
-func NewUI(rows, cols int) *UI {
-	return &UI{
+func NewUI(rows, cols int, eventManager *events.EventManager) *UI {
+	ui := &UI{
 		screenRows:    rows,
 		screenCols:    cols,
 		lastColOffset: 0,
+		eventManager:  eventManager,
+		needsRefresh:  false,
 	}
+
+	// バッファイベントを購読してUI更新を最適化
+	eventManager.Subscribe(events.BufferEventType, ui.handleBufferEvent)
+
+	return ui
+}
+
+// handleBufferEvent はバッファの変更に応じてUI更新を最適化する
+func (ui *UI) handleBufferEvent(event events.Event) {
+	if bufferEvent, ok := event.(*events.BufferEvent); ok {
+		// バッファの状態が実際に変更された場合のみ更新を行う
+		if bufferEvent.Pre != bufferEvent.Post {
+			// すべての更新を単一の画面更新にまとめる
+			ui.needsRefresh = true
+		}
+	}
+}
+
+// publishRefreshEvent は画面更新イベントを発行する
+func (ui *UI) publishRefreshEvent(fullRefresh bool) {
+	if ui.eventManager == nil {
+		return
+	}
+
+	event := events.NewUIEvent(events.UIRefresh, struct {
+		FullRefresh bool
+	}{
+		FullRefresh: fullRefresh,
+	})
+	ui.eventManager.Publish(event)
+}
+
+// publishCursorUpdateEvent はカーソル更新イベントを発行する
+func (ui *UI) publishCursorUpdateEvent(pos events.Position) {
+	if ui.eventManager == nil {
+		return
+	}
+
+	event := events.NewUIEvent(events.UIScroll, pos)
+	ui.eventManager.Publish(event)
 }
 
 // RefreshScreen は画面を更新する
@@ -30,9 +76,6 @@ func (ui *UI) RefreshScreen(buffer *Buffer, filename string, rowOffset, colOffse
 
 	// カーソルを非表示にする
 	builder.WriteString("\x1b[?25l")
-
-	// 現在のカーソル位置を保存
-	builder.WriteString("\x1b[s")
 
 	// 画面をクリアして原点に移動
 	builder.WriteString(ui.clearScreen())
@@ -53,41 +96,67 @@ func (ui *UI) RefreshScreen(buffer *Buffer, filename string, rowOffset, colOffse
 
 	if row != nil {
 		// スクリーン座標の計算
-		runePos := row.OffsetToScreenPosition(x)
-		screenX = runePos - colOffset + 1
+		// カーソルがある位置までの文字幅の合計を計算
+		visualPos := 0
+		for i := 0; i < x && i < row.GetRuneCount(); i++ {
+			visualPos += row.GetRuneWidth(i)
+		}
+		screenX = visualPos - colOffset + 1
+
+		// 範囲チェックと調整
+		if screenX < 1 {
+			screenX = 1
+		}
+		if screenX > ui.screenCols {
+			screenX = ui.screenCols
+		}
 	}
 
-	// カーソル位置の範囲チェック
-	if screenX < 1 {
-		screenX = 1
-	}
-	if screenY < 1 {
-		screenY = 1
-	}
-	if screenX > ui.screenCols {
-		screenX = ui.screenCols
-	}
-	if screenY > ui.screenRows-2 {
-		screenY = ui.screenRows - 2
-	}
+	// カーソル位置の範囲チェックと調整
+	screenY = max(1, min(screenY, ui.screenRows-2))
 
-	// カーソルを新しい位置に移動（画面の端を考慮）
-	if screenY >= 1 && screenY <= ui.screenRows-2 {
-		builder.WriteString(fmt.Sprintf("\x1b[%d;%dH", screenY, screenX))
-	}
+	// カーソルを新しい位置に移動
+	builder.WriteString(fmt.Sprintf("\x1b[%d;%dH", screenY, screenX))
 
 	// カーソルを再表示
 	builder.WriteString("\x1b[?25h")
 
-	// 全ての変更を一度に出力
+	// すべての変更を一度に出力
 	_, err := os.Stdout.WriteString(builder.String())
 	return err
 }
 
 // SetMessage はステータスメッセージを設定する
 func (ui *UI) SetMessage(format string, args ...interface{}) {
+	// 同じメッセージが既に設定されている場合は、イベントを発行しない
+	if ui.message == format && len(ui.messageArgs) == len(args) {
+		sameArgs := true
+		for i, arg := range args {
+			if arg != ui.messageArgs[i] {
+				sameArgs = false
+				break
+			}
+		}
+		if sameArgs {
+			return
+		}
+	}
+
 	ui.message = format
-	ui.messageArgs = args
+	ui.messageArgs = make([]interface{}, len(args))
+	copy(ui.messageArgs, args)
+
+	// メッセージ更新イベントを発行（既存のメッセージと異なる場合のみ）
+	if ui.eventManager != nil {
+		event := events.NewUIEvent(events.UIStatusMessage, struct {
+			Message string
+			Args    []interface{}
+		}{
+			Message: format,
+			Args:    args,
+		})
+		ui.eventManager.Publish(event)
+	}
 }
 
 // drawStatusBar はステータスバーを描画する
@@ -189,27 +258,26 @@ func (ui *UI) drawTextRow(row *Row, colOffset int) string {
 	}
 
 	var builder strings.Builder
-	runes := []rune(row.GetContent())
-	visualPos := 0 // 画面上の表示位置
+	runes := row.runeSlice // 直接runeSliceを使用
+	currentPos := 0        // 現在の表示位置
 
-	// 各文字の表示位置を計算しながら描画
 	for i := 0; i < len(runes); i++ {
 		width := row.GetRuneWidth(i)
 
 		// colOffsetより前の文字はスキップ
-		if visualPos < colOffset {
-			visualPos += width
+		if currentPos < colOffset {
+			currentPos += width
 			continue
 		}
 
 		// 画面幅を超える場合は描画終了
-		if visualPos-colOffset >= ui.screenCols {
+		if currentPos-colOffset >= ui.screenCols {
 			break
 		}
 
 		// 文字を描画
 		builder.WriteRune(runes[i])
-		visualPos += width
+		currentPos += width
 	}
 
 	return builder.String()
