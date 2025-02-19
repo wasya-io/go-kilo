@@ -195,22 +195,22 @@ func min(a, b int) int {
 // InputHandler はキー入力とその処理を管理する
 type InputHandler struct {
 	keyReader KeyReader
-	editor    *Editor
+	editor    EditorOperations
 }
 
 // NewInputHandler は新しいInputHandlerを作成する
-func NewInputHandler(editor *Editor) *InputHandler {
+func NewInputHandler(editor EditorOperations) *InputHandler {
 	return &InputHandler{
 		keyReader: NewStandardKeyReader(),
 		editor:    editor,
 	}
 }
 
-// ProcessKeypress はキー入力を処理する
-func (ih *InputHandler) ProcessKeypress() error {
+// HandleKeypress はキー入力からコマンドを生成する
+func (ih *InputHandler) HandleKeypress() (EditorCommand, error) {
 	event, err := ih.keyReader.ReadKey()
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	switch event.Type {
@@ -218,27 +218,22 @@ func (ih *InputHandler) ProcessKeypress() error {
 		// 括弧類の補完処理
 		if shouldAutoClose := ih.handleBracketPair(event.Rune); !shouldAutoClose {
 			// 通常の文字入力を処理
-			ih.editor.buffer.InsertChar(event.Rune)
+			return NewInsertCharCommand(ih.editor, event.Rune), nil
 		}
+		return nil, nil
 	case KeyEventSpecial:
 		// 特殊キーを処理
-		if err := ih.handleSpecialKey(event.Key); err != nil {
-			return err
-		}
+		return ih.handleSpecialKey(event.Key)
 	case KeyEventControl:
 		// コントロールキーを処理
-		if err := ih.handleControlKey(event.Key); err != nil {
-			return err
-		}
+		return ih.handleControlKey(event.Key)
 	}
 
-	return ih.editor.RefreshScreen()
+	return nil, nil
 }
 
 // handleBracketPair は括弧や引用符の補完処理を行う
-// 戻り値は補完処理を行ったかどうか
 func (ih *InputHandler) handleBracketPair(r rune) bool {
-	// 開き括弧と閉じ括弧のマッピング
 	pairs := map[rune]rune{
 		'(':  ')',
 		'{':  '}',
@@ -248,33 +243,28 @@ func (ih *InputHandler) handleBracketPair(r rune) bool {
 		'`':  '`',
 	}
 
-	// 閉じ括弧があるかチェック
 	closeChar, isPair := pairs[r]
 	if !isPair {
 		return false
 	}
 
-	// 引用符（", ', `）の場合、同じ行の左側に同じ文字があるかチェック
 	if r == '"' || r == '\'' || r == '`' {
 		if ih.hasQuoteInLine(r) {
-			ih.editor.buffer.InsertChar(r)
+			NewInsertCharCommand(ih.editor, r).Execute()
 			return true
 		}
 	}
 
-	// 開き括弧を挿入
-	ih.editor.buffer.InsertChar(r)
-	// 閉じ括弧を挿入
-	ih.editor.buffer.InsertChar(closeChar)
-	// カーソルを一つ戻す
-	ih.editor.buffer.MoveCursor(CursorLeft)
+	NewInsertCharCommand(ih.editor, r).Execute()
+	NewInsertCharCommand(ih.editor, closeChar).Execute()
+	NewMoveCursorCommand(ih.editor, CursorLeft).Execute()
 	return true
 }
 
 // hasQuoteInLine は現在の行の左側に指定された引用符があるかどうかを確認する
 func (ih *InputHandler) hasQuoteInLine(quote rune) bool {
-	cursor := ih.editor.buffer.GetCursor()
-	content := ih.editor.buffer.GetContent(cursor.Y)
+	cursor := ih.editor.GetCursor()
+	content := ih.editor.GetContent(cursor.Y)
 	if content == "" {
 		return false
 	}
@@ -290,89 +280,80 @@ func (ih *InputHandler) hasQuoteInLine(quote rune) bool {
 }
 
 // handleSpecialKey は特殊キーの処理を行う
-func (ih *InputHandler) handleSpecialKey(key Key) error {
+func (ih *InputHandler) handleSpecialKey(key Key) (EditorCommand, error) {
 	switch key {
 	case KeyTab:
-		// タブ文字をスペースに変換して挿入
-		for i := 0; i < ih.editor.config.TabWidth; i++ {
-			ih.editor.buffer.InsertChar(' ')
+		// タブをスペースに変換する複合コマンドを作成
+		tabWidth := ih.editor.GetConfig().TabWidth
+		for i := 0; i < tabWidth; i++ {
+			NewInsertCharCommand(ih.editor, ' ').Execute()
 		}
+		return nil, nil
 	case KeyShiftTab:
-		// カーソルが行頭にある場合は何もしない
-		cursor := ih.editor.buffer.GetCursor()
-		if cursor.X == 0 {
-			return nil
-		}
-
-		// 現在の行の内容を取得
-		content := ih.editor.buffer.GetContent(cursor.Y)
-		if content == "" {
-			return nil
-		}
-
-		// カーソルの左側のスペースを数える
-		runes := []rune(content)
-		spaceCount := 0
-		pos := cursor.X - 1
-		for pos >= 0 && runes[pos] == ' ' {
-			spaceCount++
-			pos--
-		}
-
-		// スペースがない場合は何もしない
-		if spaceCount == 0 {
-			return nil
-		}
-
-		// 現在のスペース数から、次に目指すスペース数を計算
-		tabWidth := ih.editor.config.TabWidth
-		targetSpaces := (spaceCount - 1) / tabWidth * tabWidth
-		if targetSpaces == spaceCount {
-			targetSpaces = ((spaceCount-1)/tabWidth - 1) * tabWidth
-		}
-		targetSpaces = max(0, targetSpaces) // マイナスにならないように
-
-		// スペースを削除（最大でもスペース数分まで）
-		deleteCount := min(spaceCount-targetSpaces, spaceCount)
-		for i := 0; i < deleteCount; i++ {
-			ih.editor.buffer.DeleteChar()
-		}
+		return ih.handleShiftTab(), nil
 	case KeyArrowUp:
-		ih.editor.buffer.MoveCursor(CursorUp)
-		ih.editor.UpdateScroll()
+		return NewMoveCursorCommand(ih.editor, CursorUp), nil
 	case KeyArrowDown:
-		ih.editor.buffer.MoveCursor(CursorDown)
-		ih.editor.UpdateScroll()
+		return NewMoveCursorCommand(ih.editor, CursorDown), nil
 	case KeyArrowRight:
-		ih.editor.buffer.MoveCursor(CursorRight)
-		ih.editor.UpdateScroll()
+		return NewMoveCursorCommand(ih.editor, CursorRight), nil
 	case KeyArrowLeft:
-		ih.editor.buffer.MoveCursor(CursorLeft)
-		ih.editor.UpdateScroll()
+		return NewMoveCursorCommand(ih.editor, CursorLeft), nil
 	case KeyBackspace:
-		ih.editor.buffer.DeleteChar()
+		return NewDeleteCharCommand(ih.editor), nil
 	case KeyEnter:
-		ih.editor.buffer.InsertNewline()
+		return NewInsertNewlineCommand(ih.editor), nil
+	}
+	return nil, nil
+}
+
+// handleShiftTab は Shift+Tab の処理を行う
+func (ih *InputHandler) handleShiftTab() EditorCommand {
+	cursor := ih.editor.GetCursor()
+	if cursor.X == 0 {
+		return nil
+	}
+
+	content := ih.editor.GetContent(cursor.Y)
+	if content == "" {
+		return nil
+	}
+
+	runes := []rune(content)
+	spaceCount := 0
+	pos := cursor.X - 1
+	for pos >= 0 && runes[pos] == ' ' {
+		spaceCount++
+		pos--
+	}
+
+	if spaceCount == 0 {
+		return nil
+	}
+
+	tabWidth := ih.editor.GetConfig().TabWidth
+	targetSpaces := (spaceCount - 1) / tabWidth * tabWidth
+	if targetSpaces == spaceCount {
+		targetSpaces = ((spaceCount-1)/tabWidth - 1) * tabWidth
+	}
+	targetSpaces = max(0, targetSpaces)
+
+	deleteCount := min(spaceCount-targetSpaces, spaceCount)
+	for i := 0; i < deleteCount; i++ {
+		NewDeleteCharCommand(ih.editor).Execute()
 	}
 	return nil
 }
 
 // handleControlKey は制御キーの処理を行う
-func (ih *InputHandler) handleControlKey(key Key) error {
+func (ih *InputHandler) handleControlKey(key Key) (EditorCommand, error) {
 	switch key {
 	case KeyCtrlQ, KeyCtrlC:
-		if ih.editor.buffer.IsDirty() {
-			ih.editor.setStatusMessage("Warning! File has unsaved changes. Press Ctrl-Q or Ctrl-C again to quit.")
-			ih.editor.buffer.SetDirty(false)
-			return nil
-		}
-		ih.editor.Quit()
+		return NewQuitCommand(ih.editor), nil
 	case KeyCtrlS:
-		if err := ih.editor.SaveFile(); err != nil {
-			ih.editor.setStatusMessage("Can't save! I/O error: %s", err)
-		}
+		return NewSaveCommand(ih.editor), nil
 	}
-	return nil
+	return nil, nil
 }
 
 // SetKeyReader はキー入力読み取りインターフェースを設定する

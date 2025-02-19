@@ -84,17 +84,15 @@ func (e *Editor) RefreshScreen() error {
 
 // ProcessKeypress はキー入力を処理する
 func (e *Editor) ProcessKeypress() error {
-	err := e.input.ProcessKeypress()
+	command, err := e.input.HandleKeypress()
 	if err != nil {
 		return err
 	}
 
-	// カーソル位置の移動後に必ずスクロール位置を更新
-	e.UpdateScroll()
-
-	// 画面の更新前に、スクロール位置が適切な範囲内にあることを確認
-	if e.rowOffset > e.buffer.GetLineCount()-1 {
-		e.rowOffset = max(0, e.buffer.GetLineCount()-1)
+	if command != nil {
+		if err := command.Execute(); err != nil {
+			return err
+		}
 	}
 
 	return e.RefreshScreen()
@@ -193,7 +191,49 @@ func (e *Editor) SaveFile() error {
 	return nil
 }
 
-// setStatusMessage はステータスメッセージを設定する
+// setStatusMessage はステータスメッセージを設定する（非公開メソッド）
 func (e *Editor) setStatusMessage(format string, args ...interface{}) {
 	e.ui.SetMessage(format, args...)
+}
+
+// SetStatusMessage はステータスメッセージを設定する（EditorOperations用の公開メソッド）
+func (e *Editor) SetStatusMessage(format string, args ...interface{}) {
+	e.setStatusMessage(format, args...)
+}
+
+// EditorOperationsインターフェースの実装
+func (e *Editor) GetConfig() *Config {
+	return e.config
+}
+
+func (e *Editor) InsertChar(ch rune) {
+	e.buffer.InsertChar(ch)
+}
+
+func (e *Editor) DeleteChar() {
+	e.buffer.DeleteChar()
+}
+
+func (e *Editor) MoveCursor(movement CursorMovement) {
+	e.buffer.MoveCursor(movement)
+}
+
+func (e *Editor) InsertNewline() {
+	e.buffer.InsertNewline()
+}
+
+func (e *Editor) IsDirty() bool {
+	return e.buffer.IsDirty()
+}
+
+func (e *Editor) SetDirty(dirty bool) {
+	e.buffer.SetDirty(dirty)
+}
+
+func (e *Editor) GetCursor() Cursor {
+	return e.buffer.GetCursor()
+}
+
+func (e *Editor) GetContent(lineNum int) string {
+	return e.buffer.GetContent(lineNum)
 }

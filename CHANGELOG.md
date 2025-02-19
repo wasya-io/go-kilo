@@ -1,5 +1,20 @@
 # CHANGELOG
 
+## [0.0.26] - 2024-02-19
+### Changed
+- コードベースの依存関係を大幅に改善
+  - コマンドパターンを導入してInputHandlerの責務を整理
+  - EditorOperationsインターフェースによる循環参照を解消
+  - Editorクラスの責務を明確化
+  - テストヘルパーメソッドの重複を解消
+
+### Added
+- コマンド関連のクラスとインターフェースを追加
+  - EditorCommand インターフェース
+  - EditorOperations インターフェース
+  - InsertCharCommand など各種コマンドクラス
+  - コマンド実行のための基盤整備
+
 ## [0.0.25] - 2024-02-19
 ### Added
 - Shift+TABによるアンインデント機能を実装
