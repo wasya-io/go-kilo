@@ -44,7 +44,7 @@ type EditorTestHelper interface {
 // GetRows は行のコンテンツを文字列のスライスとして返す
 // テスト用に実装
 func (e *Editor) GetRows() []string {
-	return e.buffer.GetAllContent()
+	return e.buffer.GetAllLines()
 }
 
 // SetKeyReader はキー入力読み取りインターフェースを設定する

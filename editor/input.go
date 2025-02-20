@@ -72,7 +72,7 @@ func (kr *StandardKeyReader) ReadKey() (KeyEvent, error) {
 		return KeyEvent{}, fmt.Errorf("no input")
 	}
 
-	// 特殊キーの処理（バッファの破棄なし）
+	// 特殊キーの処理
 	if buf[0] == 3 { // Ctrl+C
 		return KeyEvent{Type: KeyEventControl, Key: KeyCtrlC}, nil
 	} else if buf[0] == 17 { // Ctrl+Q
@@ -106,20 +106,35 @@ func (kr *StandardKeyReader) ReadKey() (KeyEvent, error) {
 				return KeyEvent{Type: KeyEventSpecial, Key: KeyShiftTab}, nil
 			}
 		}
-		// エスケープシーケンスでない場合は通常の文字として処理
-	}
-
-	// 通常文字の処理
-	if buf[0] >= 32 && buf[0] < 127 {
-		return KeyEvent{Type: KeyEventChar, Rune: rune(buf[0])}, nil
+		return KeyEvent{}, fmt.Errorf("unknown escape sequence")
 	}
 
 	// UTF-8文字の処理
 	if (buf[0] & 0x80) != 0 {
-		r, _ := utf8.DecodeRune(buf[:n])
+		// マルチバイト文字の処理
+		r, size := utf8.DecodeRune(buf[:n])
 		if r != utf8.RuneError {
+			// 残りのバイトがある場合は入力バッファに保存
+			if n > size {
+				remainingBytes := make([]byte, n-size)
+				copy(remainingBytes, buf[size:n])
+				// 残りのバイトを処理して入力バッファに追加
+				for len(remainingBytes) > 0 {
+					r, s := utf8.DecodeRune(remainingBytes)
+					if r == utf8.RuneError {
+						break
+					}
+					kr.inputBuffer = append(kr.inputBuffer, KeyEvent{Type: KeyEventChar, Rune: r})
+					remainingBytes = remainingBytes[s:]
+				}
+			}
 			return KeyEvent{Type: KeyEventChar, Rune: r}, nil
 		}
+	}
+
+	// ASCII文字の処理
+	if buf[0] >= 32 && buf[0] < 127 {
+		return KeyEvent{Type: KeyEventChar, Rune: rune(buf[0])}, nil
 	}
 
 	return KeyEvent{}, fmt.Errorf("unknown input")
@@ -183,24 +198,6 @@ func (h *InputHandler) HandleKeypress() (Command, error) {
 
 // createCommand はキーイベントからコマンドを作成する
 func (h *InputHandler) createCommand(event KeyEvent) (Command, error) {
-	// キー入力の情報をより分かりやすく表示
-	var keyInfo string
-	switch event.Type {
-	case KeyEventChar:
-		keyInfo = fmt.Sprintf("Input: Char '%c'", event.Rune)
-	case KeyEventSpecial:
-		keyInfo = fmt.Sprintf("Input: %s", h.getKeyName(event.Key))
-	case KeyEventControl:
-		keyInfo = fmt.Sprintf("Input: %s", h.getKeyName(event.Key))
-	default:
-		keyInfo = "Input: Unknown"
-	}
-
-	// UIのデバッグメッセージを設定
-	if ui, ok := h.editor.(interface{ GetUI() *UI }); ok {
-		ui.GetUI().SetDebugMessage(keyInfo)
-	}
-
 	switch event.Type {
 	case KeyEventChar, KeyEventSpecial:
 		// 通常の文字入力または特殊キー入力時は警告状態をクリア
@@ -209,6 +206,11 @@ func (h *InputHandler) createCommand(event KeyEvent) (Command, error) {
 			h.editor.SetStatusMessage("")
 		}
 		if event.Type == KeyEventChar {
+			// UTF-8文字の処理
+			if event.Rune >= 0x80 {
+				// マルチバイト文字を直接挿入
+				return NewInsertCharCommand(h.editor, event.Rune), nil
+			}
 			return NewInsertCharCommand(h.editor, event.Rune), nil
 		}
 		return h.createSpecialKeyCommand(event.Key), nil

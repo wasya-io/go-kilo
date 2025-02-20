@@ -1,10 +1,16 @@
 package editor
 
 import (
+	"errors"
 	"os"
 	"strings"
 
 	"github.com/wasya-io/go-kilo/editor/events"
+)
+
+// エラー定義
+var (
+	ErrNoBuffer = errors.New("no buffer available")
 )
 
 // FileManager はファイル操作を管理する構造体
@@ -34,30 +40,58 @@ func (fm *FileManager) OpenFile(filename string) error {
 
 	fm.filename = filename
 	fm.buffer.LoadContent(content)
+	fm.buffer.Filename = filename // バッファのファイル名も更新
 
 	event := events.NewFileEvent(events.FileOpen, filename, content)
 	fm.publishEvent(event)
 	return nil
 }
 
-// SaveFile は現在のバッファの内容をファイルに保存する
-func (fm *FileManager) SaveFile() error {
-	if fm.filename == "" {
+// SaveFile はバッファの内容をファイルに保存する
+func (fm *FileManager) SaveFile(filename string, content []string) error {
+	if filename == "" {
 		return ErrNoFilename
 	}
 
-	content := fm.buffer.GetAllContent()
-	err := fm.writeFile(fm.filename, content)
+	// ファイルに書き込む
+	file, err := os.Create(filename)
 	if err != nil {
-		event := events.NewFileEvent(events.FileSave, fm.filename, content)
-		event.SetError(err)
-		fm.publishEvent(event)
 		return err
 	}
+	defer file.Close()
 
-	event := events.NewFileEvent(events.FileSave, fm.filename, content)
-	fm.publishEvent(event)
+	// 内容を書き込む
+	for i, line := range content {
+		if i > 0 {
+			file.WriteString("\n")
+		}
+		file.WriteString(line)
+	}
+
+	// バッファのファイル名を更新
+	if fm.buffer != nil {
+		fm.buffer.Filename = filename
+		fm.buffer.SetDirty(false) // ダーティフラグをクリア
+	}
+
+	// ファイル保存イベントを発行
+	if fm.eventManager != nil {
+		event := events.NewFileEvent(events.FileSave, filename, content)
+		fm.eventManager.Publish(event)
+	}
+
 	return nil
+}
+
+// SaveCurrentFile は現在のファイルに保存する
+func (fm *FileManager) SaveCurrentFile() error {
+	if fm.buffer == nil {
+		return ErrNoBuffer
+	}
+	if fm.filename == "" { // FileManagerのfilenameフィールドを使用
+		return ErrNoFilename
+	}
+	return fm.SaveFile(fm.filename, fm.buffer.GetAllLines())
 }
 
 // GetFilename は現在開いているファイル名を返す

@@ -1,7 +1,10 @@
 package editor
 
 import (
+	"fmt"
 	"os"
+	"runtime/debug"
+	"time"
 
 	"github.com/wasya-io/go-kilo/editor/events"
 	"golang.org/x/sys/unix"
@@ -75,8 +78,72 @@ func New(testMode bool) (*Editor, error) {
 	return e, nil
 }
 
+// setupRecoveryHandlers はリカバリーハンドラを設定する
+func (e *Editor) setupRecoveryHandlers() {
+	// パニックハンドラを設定
+	defer func() {
+		if r := recover(); r != nil {
+			e.handlePanic(r)
+		}
+	}()
+
+	// バッファイベントのリカバリー戦略を設定
+	e.eventManager.SetRecoveryStrategy(events.RollbackToStable)
+
+	// クリティカルエラー用のグローバルハンドラを設定
+	e.eventManager.SetGlobalErrorHandler(func(err error) {
+		stack := debug.Stack()
+		e.setStatusMessage("Critical error: %v", err)
+
+		// スタックトレースとエラー情報を一時ファイルに保存
+		timestamp := time.Now().Format("20060102-150405")
+		errorFile := fmt.Sprintf("error-%s.log", timestamp)
+		content := []string{
+			fmt.Sprintf("Error: %v", err),
+			"Stack trace:",
+			string(stack),
+		}
+		e.fileManager.SaveFile(errorFile, content)
+
+		// 自動保存を試行
+		if e.buffer != nil && e.buffer.IsDirty() {
+			e.saveBufferToTempFile()
+		}
+	})
+}
+
+// handlePanic はパニックから復帰を試みる
+func (e *Editor) handlePanic(r interface{}) {
+	// パニック情報を記録
+	stack := debug.Stack()
+	timestamp := time.Now().Format("20060102-150405")
+	crashFile := fmt.Sprintf("crash-%s.log", timestamp)
+	content := []string{
+		fmt.Sprintf("Panic: %v", r),
+		"Stack trace:",
+		string(stack),
+	}
+	e.fileManager.SaveFile(crashFile, content)
+
+	// バッファの保存を試みる
+	if e.buffer != nil && e.buffer.IsDirty() {
+		e.saveBufferToTempFile()
+	}
+
+	// 最後の安定状態への復帰を試みる
+	if err := e.RecoverFromLatestSnapshot(); err != nil {
+		e.setStatusMessage("Failed to recover: %v", err)
+		return
+	}
+
+	e.setStatusMessage("Recovered from panic. Crash log saved to %s", crashFile)
+}
+
 // setupEventHandlers はイベントハンドラを設定する
 func (e *Editor) setupEventHandlers() {
+	// リカバリーハンドラを設定
+	e.setupRecoveryHandlers()
+
 	// バッファイベントのハンドラを登録
 	e.eventManager.Subscribe(events.BufferEventType, func(event events.Event) {
 		if bufferEvent, ok := event.(*events.BufferEvent); ok {
@@ -97,6 +164,31 @@ func (e *Editor) setupEventHandlers() {
 			e.handleFileEvent(fileEvent)
 		}
 	})
+
+	// エラーハンドラの設定
+	e.eventManager.SetGlobalErrorHandler(func(err error) {
+		e.setStatusMessage("Error: %v", err)
+		// 自動保存を試行
+		if e.buffer != nil && e.buffer.IsDirty() {
+			e.saveBufferToTempFile()
+		}
+	})
+
+	// バッファイベントのエラーハンドラ
+	e.eventManager.SetErrorHandler(events.BufferEventType, func(event events.Event, err error) {
+		if bufferEvent, ok := event.(*events.BufferEvent); ok {
+			// 前回の状態に復帰を試みる
+			prevState, _ := bufferEvent.GetStates()
+			e.buffer.RestoreState(prevState)
+			e.setStatusMessage("Recovered from error: %v", err)
+		}
+	})
+
+	// 定期的なスナップショット作成
+	go e.periodicSnapshot()
+
+	// エラー統計の定期チェック
+	go e.monitorErrors()
 }
 
 // handleBufferEvent はバッファイベントを処理する
@@ -290,7 +382,7 @@ func (e *Editor) OpenFile(filename string) error {
 
 // SaveFile は現在の内容をファイルに保存する
 func (e *Editor) SaveFile() error {
-	if err := e.fileManager.SaveFile(); err != nil {
+	if err := e.fileManager.SaveCurrentFile(); err != nil {
 		if err == ErrNoFilename {
 			e.setStatusMessage("No filename")
 			return nil
@@ -361,4 +453,58 @@ func (e *Editor) GetContent(lineNum int) string {
 
 func (e *Editor) InsertChars(chars []rune) {
 	e.buffer.InsertChars(chars)
+}
+
+// periodicSnapshot は定期的にスナップショットを作成する
+func (e *Editor) periodicSnapshot() {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			if e.buffer != nil && e.buffer.IsDirty() {
+				e.eventManager.CreateSnapshot()
+			}
+		case <-e.quit:
+			return
+		}
+	}
+}
+
+// saveBufferToTempFile はバッファの内容を一時ファイルに保存する
+func (e *Editor) saveBufferToTempFile() {
+	baseName := "untitled"
+	if e.buffer.Filename != "" {
+		baseName = e.buffer.Filename
+	}
+	tempFile := fmt.Sprintf("%s.recovery", baseName)
+	if err := e.fileManager.SaveFile(tempFile, e.buffer.GetAllLines()); err != nil {
+		e.setStatusMessage("Failed to create recovery file: %v", err)
+		return
+	}
+	e.setStatusMessage("Recovery file created: %s", tempFile)
+}
+
+// RecoverFromLatestSnapshot は最新のスナップショットから復元を試みる
+func (e *Editor) RecoverFromLatestSnapshot() error {
+	return e.eventManager.RecoverFromSnapshot(time.Now())
+}
+
+// monitorErrors はエラー統計を定期的にチェックする
+func (e *Editor) monitorErrors() {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			stats := e.eventManager.GetErrorStats()
+			if criticalErrors := stats[events.BufferEventType] + stats[events.FileEventType]; criticalErrors > 0 {
+				e.setStatusMessage("Warning: %d critical errors in last 5 minutes", criticalErrors)
+			}
+		case <-e.quit:
+			return
+		}
+	}
 }

@@ -1,14 +1,19 @@
 package editor
 
-import "github.com/wasya-io/go-kilo/editor/events"
+import (
+	"fmt"
+
+	"github.com/wasya-io/go-kilo/editor/events"
+)
 
 // Buffer はテキストバッファを管理する構造体
 type Buffer struct {
-	lines        []string
+	content      []string
 	cursor       Cursor
 	isDirty      bool
 	rowCache     map[int]*Row
 	eventManager *events.EventManager
+	Filename     string // ファイル名を追加
 }
 
 // Cursor はカーソル位置を管理する構造体
@@ -19,7 +24,7 @@ type Cursor struct {
 // NewBuffer は新しいBufferインスタンスを作成する
 func NewBuffer(eventManager *events.EventManager) *Buffer {
 	return &Buffer{
-		lines:        make([]string, 0),
+		content:      make([]string, 0),
 		cursor:       Cursor{X: 0, Y: 0},
 		isDirty:      false,
 		rowCache:     make(map[int]*Row),
@@ -31,7 +36,7 @@ func NewBuffer(eventManager *events.EventManager) *Buffer {
 func (b *Buffer) LoadContent(lines []string) {
 	prevState := b.getCurrentState()
 
-	b.lines = lines
+	b.content = lines
 	b.isDirty = false
 	b.cursor = Cursor{X: 0, Y: 0}
 	b.rowCache = make(map[int]*Row)
@@ -40,24 +45,34 @@ func (b *Buffer) LoadContent(lines []string) {
 	b.publishBufferEvent(events.BufferLoadContent, b.cursor, lines, prevState)
 }
 
-// GetContent は指定された行の内容を返す
+// GetContent はバッファの指定行の内容を取得する（後方互換性のために維持）
 func (b *Buffer) GetContent(lineNum int) string {
-	if lineNum < 0 || lineNum >= len(b.lines) {
-		return ""
-	}
-
-	// 行のキャッシュを更新
-	row := b.getRow(lineNum)
-	if row == nil {
-		return ""
-	}
-
-	return row.GetContent()
+	return b.GetContentLine(lineNum)
 }
 
-// GetAllContent はバッファの全内容を返す
-func (b *Buffer) GetAllContent() []string {
-	return b.lines
+// GetContentLine は指定行の内容を取得する
+func (b *Buffer) GetContentLine(lineNum int) string {
+	if lineNum >= 0 && lineNum < len(b.content) {
+		return b.content[lineNum]
+	}
+	return ""
+}
+
+// GetAllLines はバッファの全内容を[]string形式で取得する
+func (b *Buffer) GetAllLines() []string {
+	return append([]string{}, b.content...)
+}
+
+// GetAllContent はバッファの全内容を文字列として取得する
+func (b *Buffer) GetAllContent() string {
+	content := ""
+	for i, line := range b.content {
+		if i > 0 {
+			content += "\n"
+		}
+		content += line
+	}
+	return content
 }
 
 // InsertChar は現在のカーソル位置に文字を挿入する
@@ -65,8 +80,8 @@ func (b *Buffer) InsertChar(ch rune) {
 	prevState := b.getCurrentState()
 
 	// 空のバッファの場合、最初の行を作成
-	if len(b.lines) == 0 {
-		b.lines = append(b.lines, "")
+	if len(b.content) == 0 {
+		b.content = append(b.content, "")
 		b.rowCache = make(map[int]*Row)
 	}
 
@@ -78,7 +93,7 @@ func (b *Buffer) InsertChar(ch rune) {
 
 	// 文字を挿入
 	row.InsertChar(b.cursor.X, ch)
-	b.lines[b.cursor.Y] = row.GetContent()
+	b.content[b.cursor.Y] = row.GetContent()
 	delete(b.rowCache, b.cursor.Y)
 	b.cursor.X++
 	b.isDirty = true
@@ -96,8 +111,8 @@ func (b *Buffer) InsertChars(chars []rune) {
 	prevState := b.getCurrentState()
 
 	// 空のバッファの場合、最初の行を作成
-	if len(b.lines) == 0 {
-		b.lines = append(b.lines, "")
+	if len(b.content) == 0 {
+		b.content = append(b.content, "")
 		b.rowCache = make(map[int]*Row)
 	}
 
@@ -114,7 +129,7 @@ func (b *Buffer) InsertChars(chars []rune) {
 	}
 
 	// 行の内容を更新
-	b.lines[b.cursor.Y] = row.GetContent()
+	b.content[b.cursor.Y] = row.GetContent()
 	delete(b.rowCache, b.cursor.Y)
 	b.isDirty = true
 
@@ -124,7 +139,7 @@ func (b *Buffer) InsertChars(chars []rune) {
 
 // DeleteChar はカーソル位置の文字を削除する
 func (b *Buffer) DeleteChar() {
-	if len(b.lines) == 0 || b.cursor.Y >= len(b.lines) {
+	if len(b.content) == 0 || b.cursor.Y >= len(b.content) {
 		return
 	}
 
@@ -134,8 +149,8 @@ func (b *Buffer) DeleteChar() {
 	if b.cursor.X == 0 {
 		if b.cursor.Y > 0 {
 			// 前の行に結合する処理
-			prevLine := b.lines[b.cursor.Y-1]
-			currLine := b.lines[b.cursor.Y]
+			prevLine := b.content[b.cursor.Y-1]
+			currLine := b.content[b.cursor.Y]
 
 			// カーソルは前の行の末尾に移動
 			b.cursor.Y--
@@ -143,16 +158,16 @@ func (b *Buffer) DeleteChar() {
 
 			// 行を結合（現在の行が空でない場合のみ）
 			if currLine != "" {
-				b.lines[b.cursor.Y] = prevLine + currLine
+				b.content[b.cursor.Y] = prevLine + currLine
 			}
 
 			// 現在の行より後ろの行をすべて1つ前にシフト
-			copy(b.lines[b.cursor.Y+1:], b.lines[b.cursor.Y+2:])
+			copy(b.content[b.cursor.Y+1:], b.content[b.cursor.Y+2:])
 			// スライスの長さを1つ減らす
-			b.lines = b.lines[:len(b.lines)-1]
+			b.content = b.content[:len(b.content)-1]
 
 			// キャッシュをクリア
-			for i := b.cursor.Y; i < len(b.lines); i++ {
+			for i := b.cursor.Y; i < len(b.content); i++ {
 				delete(b.rowCache, i)
 			}
 			b.isDirty = true
@@ -162,7 +177,7 @@ func (b *Buffer) DeleteChar() {
 		row := b.getRow(b.cursor.Y)
 		if row != nil && b.cursor.X > 0 {
 			row.DeleteChar(b.cursor.X - 1)
-			b.lines[b.cursor.Y] = row.GetContent()
+			b.content[b.cursor.Y] = row.GetContent()
 			delete(b.rowCache, b.cursor.Y)
 			b.cursor.X--
 			b.isDirty = true
@@ -175,7 +190,7 @@ func (b *Buffer) DeleteChar() {
 
 // getRow は指定された行のRowオブジェクトを取得する
 func (b *Buffer) getRow(y int) *Row {
-	if y < 0 || y >= len(b.lines) {
+	if y < 0 || y >= len(b.content) {
 		return nil
 	}
 
@@ -183,14 +198,14 @@ func (b *Buffer) getRow(y int) *Row {
 		return row
 	}
 
-	row := NewRow(b.lines[y])
+	row := NewRow(b.content[y])
 	b.rowCache[y] = row
 	return row
 }
 
 // MoveCursor はカーソルを移動する
 func (b *Buffer) MoveCursor(movement CursorMovement) {
-	if len(b.lines) == 0 {
+	if len(b.content) == 0 {
 		return
 	}
 
@@ -220,7 +235,7 @@ func (b *Buffer) MoveCursor(movement CursorMovement) {
 		if b.cursor.X < maxX {
 			// 右の文字位置に移動（シンプルに1つ次に移動）
 			b.cursor.X++
-		} else if b.cursor.Y < len(b.lines)-1 {
+		} else if b.cursor.Y < len(b.content)-1 {
 			// 次の行の先頭に移動
 			b.cursor.Y++
 			b.cursor.X = 0
@@ -236,7 +251,7 @@ func (b *Buffer) MoveCursor(movement CursorMovement) {
 			}
 		}
 	case CursorDown:
-		if b.cursor.Y < len(b.lines)-1 {
+		if b.cursor.Y < len(b.content)-1 {
 			// 現在の表示位置を維持
 			currentVisualX := currentRow.OffsetToScreenPosition(b.cursor.X)
 			b.cursor.Y++
@@ -255,7 +270,7 @@ func (b *Buffer) MoveCursor(movement CursorMovement) {
 
 // SetCursor は指定された位置にカーソルを設定する
 func (b *Buffer) SetCursor(x, y int) {
-	if y >= 0 && y < len(b.lines) {
+	if y >= 0 && y < len(b.content) {
 		prevState := b.getCurrentState()
 		oldPos := b.cursor
 
@@ -285,15 +300,15 @@ func (b *Buffer) InsertNewline() {
 	prevState := b.getCurrentState()
 
 	// 空のバッファの場合、新しい行を追加
-	if len(b.lines) == 0 {
-		b.lines = append(b.lines, "", "")
+	if len(b.content) == 0 {
+		b.content = append(b.content, "", "")
 		b.cursor.Y = 1
 		b.cursor.X = 0
 		b.isDirty = true
 		return
 	}
 
-	currentLine := b.lines[b.cursor.Y]
+	currentLine := b.content[b.cursor.Y]
 	currentRunes := []rune(currentLine)
 
 	// 現在の行を分割
@@ -309,12 +324,12 @@ func (b *Buffer) InsertNewline() {
 	}
 
 	// 元の行を更新
-	b.lines[b.cursor.Y] = firstPart
+	b.content[b.cursor.Y] = firstPart
 
 	// 新しい行を挿入するためのスペースを確保
-	b.lines = append(b.lines, "")                        // 一時的に末尾に空の行を追加
-	copy(b.lines[b.cursor.Y+2:], b.lines[b.cursor.Y+1:]) // 後続の行を1つ後ろにシフト
-	b.lines[b.cursor.Y+1] = secondPart                   // 分割した後半を新しい行として挿入
+	b.content = append(b.content, "")                        // 一時的に末尾に空の行を追加
+	copy(b.content[b.cursor.Y+2:], b.content[b.cursor.Y+1:]) // 後続の行を1つ後ろにシフト
+	b.content[b.cursor.Y+1] = secondPart                     // 分割した後半を新しい行として挿入
 
 	// カーソルを次の行の先頭に移動
 	b.cursor.Y++
@@ -322,7 +337,7 @@ func (b *Buffer) InsertNewline() {
 	b.isDirty = true
 
 	// 関連する行のキャッシュを更新
-	for i := b.cursor.Y - 1; i < len(b.lines); i++ {
+	for i := b.cursor.Y - 1; i < len(b.content); i++ {
 		delete(b.rowCache, i)
 	}
 
@@ -358,10 +373,10 @@ func (b *Buffer) GetCharAtCursor() string {
 
 // GetLineCount は行数を返す
 func (b *Buffer) GetLineCount() int {
-	if b.lines == nil {
+	if b.content == nil {
 		return 0
 	}
-	return len(b.lines)
+	return len(b.content)
 }
 
 // IsDirty は未保存の変更があるかどうかを返す
@@ -383,8 +398,8 @@ func (b *Buffer) SetDirty(dirty bool) {
 func (b *Buffer) getCurrentState() events.BufferState {
 	var content string
 	var lines []string
-	if b.cursor.Y < len(b.lines) {
-		content = b.lines[b.cursor.Y]
+	if b.cursor.Y < len(b.content) {
+		content = b.content[b.cursor.Y]
 		lines = []string{content}
 	}
 	return events.BufferState{
@@ -396,6 +411,17 @@ func (b *Buffer) getCurrentState() events.BufferState {
 		},
 		Lines: lines,
 	}
+}
+
+// RestoreState は以前の状態にバッファを復元する
+func (b *Buffer) RestoreState(state interface{}) error {
+	if bufferState, ok := state.(events.BufferState); ok {
+		b.content = bufferState.Lines
+		b.cursor = Cursor{X: bufferState.CursorPos.X, Y: bufferState.CursorPos.Y}
+		b.isDirty = bufferState.IsDirty
+		return nil
+	}
+	return fmt.Errorf("invalid state type for buffer restoration")
 }
 
 // publishBufferEvent はバッファイベントを発行する
