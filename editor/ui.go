@@ -46,6 +46,108 @@ func (ui *UI) handleBufferEvent(event events.Event) {
 	}
 }
 
+// handleUIEvent はUIイベントを処理する
+func (ui *UI) handleUIEvent(event *events.UIEvent) {
+	switch event.SubType {
+	case events.UIRefresh:
+		// 既存の全画面更新処理を維持
+		ui.needsRefresh = true
+
+	case events.UIScroll:
+		if data, ok := event.Data.(events.ScrollData); ok {
+			ui.handleScrollEvent(data)
+		}
+
+	case events.UIStatusMessage:
+		if data, ok := event.Data.(events.StatusMessageData); ok {
+			ui.handleStatusMessage(data)
+		}
+
+	case events.UIEditorPartialRefresh:
+		if data, ok := event.Data.(events.EditorUpdateData); ok {
+			ui.handlePartialRefresh(data)
+		}
+
+	case events.UICursorUpdate:
+		if data, ok := event.Data.(events.CursorData); ok {
+			ui.handleCursorUpdate(data)
+		}
+
+	case events.UIStatusBarRefresh:
+		ui.refreshStatusBar()
+
+	case events.UIMessageBarRefresh:
+		ui.refreshMessageBar()
+	}
+}
+
+// handleScrollEvent はスクロールイベントを処理する
+func (ui *UI) handleScrollEvent(data events.ScrollData) {
+	if data.IsSmooth {
+		// スムーズスクロールの場合は徐々に更新
+		ui.performSmoothScroll(data)
+	} else {
+		// 通常のスクロール処理
+		ui.lastColOffset = data.ColOffset
+		ui.needsRefresh = true
+	}
+}
+
+// handlePartialRefresh は部分更新を処理する
+func (ui *UI) handlePartialRefresh(data events.EditorUpdateData) {
+	if data.ForceAll {
+		ui.needsRefresh = true
+		return
+	}
+	// 指定された行のみを更新対象としてマーク
+	ui.markLinesForUpdate(data.Lines)
+}
+
+// handleCursorUpdate はカーソル位置の更新を処理する
+func (ui *UI) handleCursorUpdate(data events.CursorData) {
+	// カーソル位置の更新のみを行う（画面全体の更新は行わない）
+	ui.updateCursorPosition(data)
+}
+
+// handleStatusMessage はステータスメッセージを処理する
+func (ui *UI) handleStatusMessage(data events.StatusMessageData) {
+	ui.message = data.Message
+	ui.messageArgs = make([]interface{}, len(data.Args))
+	copy(ui.messageArgs, data.Args)
+	ui.refreshMessageBar()
+}
+
+// performSmoothScroll はスムーズスクロールを実行する
+func (ui *UI) performSmoothScroll(data events.ScrollData) {
+	// スムーズスクロールの実装（アニメーションなど）
+	// 現時点では通常のスクロールと同様に処理
+	ui.lastColOffset = data.ColOffset
+	ui.needsRefresh = true
+}
+
+// markLinesForUpdate は更新が必要な行をマークする
+func (ui *UI) markLinesForUpdate(lines []int) {
+	// 部分更新のための行管理を実装
+	ui.needsRefresh = true // 現時点では全体更新にフォールバック
+}
+
+// updateCursorPosition はカーソル位置を更新する
+func (ui *UI) updateCursorPosition(data events.CursorData) {
+	// カーソル位置の更新処理
+	// 現時点では画面更新のトリガーのみ
+	ui.needsRefresh = true
+}
+
+// refreshStatusBar はステータスバーを更新する
+func (ui *UI) refreshStatusBar() {
+	ui.needsRefresh = true
+}
+
+// refreshMessageBar はメッセージバーを更新する
+func (ui *UI) refreshMessageBar() {
+	ui.needsRefresh = true
+}
+
 // publishRefreshEvent は画面更新イベントを発行する
 func (ui *UI) publishRefreshEvent(fullRefresh bool) {
 	if ui.eventManager == nil {

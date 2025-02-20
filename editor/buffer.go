@@ -369,7 +369,6 @@ func (b *Buffer) publishBufferEvent(op events.BufferOperationType, pos Cursor, d
 	}
 
 	currentState := b.getCurrentState()
-	// イベントを作成して変更を確認
 	event := events.NewBufferEvent(
 		op,
 		events.Position{X: pos.X, Y: pos.Y},
@@ -379,8 +378,55 @@ func (b *Buffer) publishBufferEvent(op events.BufferOperationType, pos Cursor, d
 	)
 
 	if event.HasChanges() {
+		// バッファイベントを発行
 		b.eventManager.Publish(event)
+
+		// 対応するUIイベントも発行
+		switch op {
+		case events.BufferInsertChar, events.BufferDeleteChar:
+			// 単一行の更新
+			b.publishPartialRefreshEvent([]int{pos.Y})
+		case events.BufferNewLine:
+			// 改行以降の行すべてを更新
+			lines := make([]int, len(b.lines)-pos.Y)
+			for i := range lines {
+				lines[i] = pos.Y + i
+			}
+			b.publishPartialRefreshEvent(lines)
+		case events.BufferMoveCursor:
+			// カーソル位置の更新
+			b.publishCursorUpdateEvent(pos)
+		}
 	}
+}
+
+// publishPartialRefreshEvent は部分更新イベントを発行する
+func (b *Buffer) publishPartialRefreshEvent(lines []int) {
+	if b.eventManager == nil {
+		return
+	}
+
+	data := events.EditorUpdateData{
+		Lines:    lines,
+		ForceAll: false,
+	}
+	event := events.NewUIEvent(events.UIEditorPartialRefresh, data)
+	b.eventManager.Publish(event)
+}
+
+// publishCursorUpdateEvent はカーソル更新イベントを発行する
+func (b *Buffer) publishCursorUpdateEvent(pos Cursor) {
+	if b.eventManager == nil {
+		return
+	}
+
+	data := events.CursorData{
+		X:         pos.X,
+		Y:         pos.Y,
+		IsVisible: true,
+	}
+	event := events.NewUIEvent(events.UICursorUpdate, data)
+	b.eventManager.Publish(event)
 }
 
 // Row は1行のテキストデータと関連情報を保持する
