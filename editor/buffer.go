@@ -37,7 +37,7 @@ func (b *Buffer) LoadContent(lines []string) {
 	b.rowCache = make(map[int]*Row)
 
 	// バッファ内容変更イベントを発行
-	b.publishBufferEvent(events.BufferLoadContent, b.cursor, nil, prevState)
+	b.publishBufferEvent(events.BufferLoadContent, b.cursor, lines, prevState)
 }
 
 // GetContent は指定された行の内容を返す
@@ -193,6 +193,10 @@ func (b *Buffer) MoveCursor(movement CursorMovement) {
 	if len(b.lines) == 0 {
 		return
 	}
+
+	prevState := b.getCurrentState()
+	oldPos := b.cursor
+
 	currentRow := b.getRow(b.cursor.Y)
 	if currentRow == nil {
 		return
@@ -201,8 +205,10 @@ func (b *Buffer) MoveCursor(movement CursorMovement) {
 	switch movement {
 	case CursorLeft:
 		if b.cursor.X > 0 {
+			// 左の文字位置に移動（シンプルに1つ前に移動）
 			b.cursor.X--
 		} else if b.cursor.Y > 0 {
+			// 前の行の末尾に移動
 			b.cursor.Y--
 			targetRow := b.getRow(b.cursor.Y)
 			if targetRow != nil {
@@ -212,39 +218,47 @@ func (b *Buffer) MoveCursor(movement CursorMovement) {
 	case CursorRight:
 		maxX := currentRow.GetRuneCount()
 		if b.cursor.X < maxX {
+			// 右の文字位置に移動（シンプルに1つ次に移動）
 			b.cursor.X++
 		} else if b.cursor.Y < len(b.lines)-1 {
+			// 次の行の先頭に移動
 			b.cursor.Y++
 			b.cursor.X = 0
 		}
 	case CursorUp:
 		if b.cursor.Y > 0 {
-			// 現在の行でのカーソル位置の表示幅を取得
+			// 現在の表示位置を維持
 			currentVisualX := currentRow.OffsetToScreenPosition(b.cursor.X)
 			b.cursor.Y--
 			targetRow := b.getRow(b.cursor.Y)
 			if targetRow != nil {
-				// 移動先の行で同じ表示位置に最も近い文字位置を探す
 				b.cursor.X = targetRow.ScreenPositionToOffset(currentVisualX)
 			}
 		}
 	case CursorDown:
 		if b.cursor.Y < len(b.lines)-1 {
-			// 現在の行でのカーソル位置の表示幅を取得
+			// 現在の表示位置を維持
 			currentVisualX := currentRow.OffsetToScreenPosition(b.cursor.X)
 			b.cursor.Y++
 			targetRow := b.getRow(b.cursor.Y)
 			if targetRow != nil {
-				// 移動先の行で同じ表示位置に最も近い文字位置を探す
 				b.cursor.X = targetRow.ScreenPositionToOffset(currentVisualX)
 			}
 		}
+	}
+
+	// カーソル位置が変更された場合のみイベントを発行
+	if oldPos != b.cursor {
+		b.publishBufferEvent(events.BufferMoveCursor, b.cursor, b.cursor.toPosition(), prevState)
 	}
 }
 
 // SetCursor は指定された位置にカーソルを設定する
 func (b *Buffer) SetCursor(x, y int) {
 	if y >= 0 && y < len(b.lines) {
+		prevState := b.getCurrentState()
+		oldPos := b.cursor
+
 		row := b.getRow(y)
 		if row != nil {
 			b.cursor.Y = y
@@ -252,6 +266,10 @@ func (b *Buffer) SetCursor(x, y int) {
 				b.cursor.X = x
 			} else {
 				b.cursor.X = row.GetRuneCount()
+			}
+
+			if oldPos != b.cursor {
+				b.publishBufferEvent(events.BufferMoveCursor, b.cursor, b.cursor.toPosition(), prevState)
 			}
 		}
 	}
@@ -264,6 +282,8 @@ func (b *Buffer) GetCursorXY() (x, y int) {
 
 // InsertNewline は現在のカーソル位置で改行を挿入する
 func (b *Buffer) InsertNewline() {
+	prevState := b.getCurrentState()
+
 	// 空のバッファの場合、新しい行を追加
 	if len(b.lines) == 0 {
 		b.lines = append(b.lines, "", "")
@@ -305,11 +325,19 @@ func (b *Buffer) InsertNewline() {
 	for i := b.cursor.Y - 1; i < len(b.lines); i++ {
 		delete(b.rowCache, i)
 	}
+
+	// イベントを発行
+	b.publishBufferEvent(events.BufferNewLine, b.cursor, nil, prevState)
 }
 
 // GetCursor は現在のカーソル位置を返す
 func (b *Buffer) GetCursor() Cursor {
 	return b.cursor
+}
+
+// GetCursorPosition は現在のカーソル位置をPosition型で返す
+func (b *Buffer) GetCursorPosition() events.Position {
+	return b.cursor.toPosition()
 }
 
 // GetCharAtCursor は現在のカーソル位置の文字を返す
@@ -343,14 +371,21 @@ func (b *Buffer) IsDirty() bool {
 
 // SetDirty はダーティフラグを設定する
 func (b *Buffer) SetDirty(dirty bool) {
-	b.isDirty = dirty
+	if b.isDirty != dirty {
+		prevState := b.getCurrentState()
+		b.isDirty = dirty
+		// 状態が変更された場合のみイベントを発行
+		b.publishBufferEvent(events.BufferStateChange, b.cursor, dirty, prevState)
+	}
 }
 
 // getCurrentState は現在のバッファ状態を取得する
 func (b *Buffer) getCurrentState() events.BufferState {
 	var content string
+	var lines []string
 	if b.cursor.Y < len(b.lines) {
 		content = b.lines[b.cursor.Y]
+		lines = []string{content}
 	}
 	return events.BufferState{
 		Content: content,
@@ -359,6 +394,7 @@ func (b *Buffer) getCurrentState() events.BufferState {
 			X: b.cursor.X,
 			Y: b.cursor.Y,
 		},
+		Lines: lines,
 	}
 }
 
@@ -369,7 +405,7 @@ func (b *Buffer) publishBufferEvent(op events.BufferOperationType, pos Cursor, d
 	}
 
 	currentState := b.getCurrentState()
-	event := events.NewBufferEvent(
+	event := events.NewBufferChangeEvent(
 		op,
 		events.Position{X: pos.X, Y: pos.Y},
 		data,
@@ -377,27 +413,7 @@ func (b *Buffer) publishBufferEvent(op events.BufferOperationType, pos Cursor, d
 		currentState,
 	)
 
-	if event.HasChanges() {
-		// バッファイベントを発行
-		b.eventManager.Publish(event)
-
-		// 対応するUIイベントも発行
-		switch op {
-		case events.BufferInsertChar, events.BufferDeleteChar:
-			// 単一行の更新
-			b.publishPartialRefreshEvent([]int{pos.Y})
-		case events.BufferNewLine:
-			// 改行以降の行すべてを更新
-			lines := make([]int, len(b.lines)-pos.Y)
-			for i := range lines {
-				lines[i] = pos.Y + i
-			}
-			b.publishPartialRefreshEvent(lines)
-		case events.BufferMoveCursor:
-			// カーソル位置の更新
-			b.publishCursorUpdateEvent(pos)
-		}
-	}
+	b.eventManager.Publish(event)
 }
 
 // publishPartialRefreshEvent は部分更新イベントを発行する
@@ -420,13 +436,21 @@ func (b *Buffer) publishCursorUpdateEvent(pos Cursor) {
 		return
 	}
 
-	data := events.CursorData{
-		X:         pos.X,
-		Y:         pos.Y,
-		IsVisible: true,
-	}
-	event := events.NewUIEvent(events.UICursorUpdate, data)
+	event := events.NewUIEvent(events.UICursorUpdate, events.Position{
+		X: pos.X,
+		Y: pos.Y,
+	})
 	b.eventManager.Publish(event)
+}
+
+// toPosition はCursorをevents.Positionに変換する
+func (c Cursor) toPosition() events.Position {
+	return events.Position{X: c.X, Y: c.Y}
+}
+
+// fromPosition はevents.PositionからCursorを作成する
+func fromPosition(p events.Position) Cursor {
+	return Cursor{X: p.X, Y: p.Y}
 }
 
 // Row は1行のテキストデータと関連情報を保持する
@@ -510,25 +534,17 @@ func (r *Row) ScreenPositionToOffset(screenPos int) int {
 	}
 
 	// 画面位置に最も近い文字位置を探す
-	for i := 0; i < len(r.positions); i++ {
-		// 現在の文字の表示開始位置
-		currentPos := r.positions[i]
-		// 次の文字の表示開始位置（最後の文字の場合は行の総幅を使用）
-		nextPos := r.totalWidth
-		if i < len(r.positions)-1 {
-			nextPos = r.positions[i+1]
-		}
+	for i := 0; i < len(r.runeSlice); i++ {
+		start := r.positions[i]
+		end := r.positions[i] + r.widths[i]
 
 		// 画面位置が現在の文字の範囲内にある場合
-		if screenPos >= currentPos && screenPos < nextPos {
-			// より近い方の文字位置を返す
-			if i < len(r.positions)-1 && (nextPos-screenPos < screenPos-currentPos) {
-				return i + 1
-			}
+		if screenPos >= start && screenPos < end {
 			return i
 		}
 	}
 
+	// 見つからない場合は最後の文字の次の位置を返す
 	return len(r.runeSlice)
 }
 

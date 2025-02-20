@@ -1,27 +1,16 @@
 package events
 
-// InputEvent はキー入力イベントを表す
-type InputEvent struct {
-	BaseEvent
-	KeyType      KeyEventType
-	Rune         rune // 通常の文字入力の場合
-	SpecialKey   Key  // 特殊キーの場合
-	Modifiers    ModifierKeys
-	IsComposing  bool   // IME入力中かどうか
-	ComposedText string // IME確定文字列
-}
-
-// KeyEventType はキーイベントの種類
+// KeyEventType はキーイベントの種類を表す
 type KeyEventType int
 
 const (
-	KeyEventChar KeyEventType = iota + 1 // 0ではなく1から開始
+	KeyEventChar KeyEventType = iota
 	KeyEventSpecial
 	KeyEventControl
-	KeyEventIME // IME関連のイベント
+	KeyEventIME
 )
 
-// Key は特殊キーの種類
+// Key は特殊キーの種類を表す
 type Key int
 
 const (
@@ -45,27 +34,40 @@ const (
 	KeyPageDown
 )
 
-// ModifierKeys は修飾キーの状態を表す
+// ModifierKeys はキーの修飾子を表す
 type ModifierKeys uint8
 
 const (
+	ModNone  ModifierKeys = 0
 	ModShift ModifierKeys = 1 << iota
 	ModCtrl
 	ModAlt
 	ModMeta
 )
 
+// InputEvent はキー入力イベントを表す
+type InputEvent struct {
+	BaseEvent
+	KeyType      KeyEventType
+	Rune         rune
+	SpecialKey   Key
+	Modifiers    ModifierKeys
+	IsComposing  bool
+	ComposedText string
+}
+
 // NewInputEvent は新しいInputEventを作成する
 func NewInputEvent(keyType KeyEventType, r rune, key Key) *InputEvent {
 	return &InputEvent{
-		BaseEvent:  NewBaseEvent(InputEventType),
+		BaseEvent:  BaseEvent{Type: InputEventType},
 		KeyType:    keyType,
 		Rune:       r,
 		SpecialKey: key,
+		Modifiers:  ModNone,
 	}
 }
 
-// WithModifiers は修飾キーの状態を設定する
+// WithModifiers は修飾キーを設定する
 func (e *InputEvent) WithModifiers(mods ModifierKeys) *InputEvent {
 	e.Modifiers = mods
 	return e

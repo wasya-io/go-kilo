@@ -5,6 +5,11 @@ import (
 	"unicode/utf8"
 )
 
+// KeyReader はキー入力を読み取るインターフェース
+type KeyReader interface {
+	ReadKey() (KeyEvent, error)
+}
+
 // CursorMovement はカーソル移動の種類を表す型
 type CursorMovement byte
 
@@ -15,6 +20,27 @@ const (
 	CursorLeft  CursorMovement = 'D'
 )
 
+// EditorTestHelper はテスト用のヘルパーメソッドを提供する
+type EditorTestHelper interface {
+	TestSetCursor(x, y int) error
+	TestGetCursor() (x, y int)
+	TestMoveCursor(movement CursorMovement) error
+	TestInput(ch rune) error
+	TestDelete() error
+	GetRows() []string
+	GetContent(lineNum int) string
+	GetCharAtCursor() string
+	GetLineCount() int
+	SetKeyReader(reader KeyReader)
+	IsDirty() bool
+	SetDirty(bool)
+	UpdateScroll()
+	GetConfig() *Config
+	GetCursor() Cursor
+	SetStatusMessage(format string, args ...interface{})
+	InsertChars(chars []rune)
+}
+
 // GetRows は行のコンテンツを文字列のスライスとして返す
 // テスト用に実装
 func (e *Editor) GetRows() []string {
@@ -23,12 +49,14 @@ func (e *Editor) GetRows() []string {
 
 // SetKeyReader はキー入力読み取りインターフェースを設定する
 func (e *Editor) SetKeyReader(reader KeyReader) {
-	e.input.SetKeyReader(reader)
+	if e.input != nil {
+		e.input.SetKeyReader(reader)
+	}
 }
 
 // TestInput はテスト用に1文字入力をシミュレートする
-func (e *Editor) TestInput(r rune) error {
-	e.buffer.InsertChar(r)
+func (e *Editor) TestInput(ch rune) error {
+	e.buffer.InsertChar(ch)
 	return nil
 }
 
@@ -195,4 +223,66 @@ func (m *MockKeyReader) ReadKey() (KeyEvent, error) {
 // ResetIndex はイベントインデックスをリセットする
 func (m *MockKeyReader) ResetIndex() {
 	m.index = 0
+}
+
+// TestEditorOperations はテスト用のEditorOperations実装
+type TestEditorOperations struct {
+	editor *Editor
+}
+
+// EditorOperationsインターフェースの実装
+func (e *TestEditorOperations) InsertChar(ch rune) {
+	e.editor.InsertChar(ch)
+}
+
+func (e *TestEditorOperations) InsertChars(chars []rune) {
+	e.editor.InsertChars(chars)
+}
+
+func (e *TestEditorOperations) DeleteChar() {
+	e.editor.DeleteChar()
+}
+
+func (e *TestEditorOperations) InsertNewline() {
+	e.editor.InsertNewline()
+}
+
+func (e *TestEditorOperations) MoveCursor(movement CursorMovement) {
+	e.editor.MoveCursor(movement)
+}
+
+func (e *TestEditorOperations) SaveFile() error {
+	return e.editor.SaveFile()
+}
+
+func (e *TestEditorOperations) Quit() {
+	e.editor.Quit()
+}
+
+func (e *TestEditorOperations) IsDirty() bool {
+	return e.editor.IsDirty()
+}
+
+func (e *TestEditorOperations) SetDirty(dirty bool) {
+	e.editor.SetDirty(dirty)
+}
+
+func (e *TestEditorOperations) SetStatusMessage(format string, args ...interface{}) {
+	e.editor.SetStatusMessage(format, args...)
+}
+
+func (e *TestEditorOperations) UpdateScroll() {
+	e.editor.UpdateScroll()
+}
+
+func (e *TestEditorOperations) GetCursor() Cursor {
+	return e.editor.GetCursor()
+}
+
+func (e *TestEditorOperations) GetContent(lineNum int) string {
+	return e.editor.GetContent(lineNum)
+}
+
+func (e *TestEditorOperations) GetConfig() *Config {
+	return e.editor.GetConfig()
 }

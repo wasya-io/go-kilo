@@ -25,6 +25,11 @@ func NewStandardInputEventEmitter(eventManager *EventManager) *StandardInputEven
 // EmitInputEvent はキー入力イベントを発行する
 func (e *StandardInputEventEmitter) EmitInputEvent(event *InputEvent) {
 	if e.eventManager != nil {
+		// バッチモードを開始
+		e.eventManager.BeginBatch()
+		defer e.eventManager.EndBatch()
+
+		// 入力イベントを発行
 		e.eventManager.Publish(event)
 	}
 }
@@ -49,4 +54,16 @@ func (e *StandardInputEventEmitter) Unsubscribe(handler func(*InputEvent)) {
 			}
 		})
 	}
+}
+
+// EmitKeyEvent はキーイベントを発行するヘルパーメソッド
+func (e *StandardInputEventEmitter) EmitKeyEvent(keyType KeyEventType, r rune, key Key, mods ModifierKeys) {
+	event := NewInputEvent(keyType, r, key).WithModifiers(mods)
+	e.EmitInputEvent(event)
+}
+
+// EmitIMEEvent はIMEイベントを発行するヘルパーメソッド
+func (e *StandardInputEventEmitter) EmitIMEEvent(isComposing bool, text string) {
+	event := NewInputEvent(KeyEventIME, 0, KeyNone).WithIMEComposition(isComposing, text)
+	e.EmitInputEvent(event)
 }

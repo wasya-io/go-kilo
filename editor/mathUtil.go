@@ -1,19 +1,25 @@
 package editor
 
-// mathUtil.go は数学関連のユーティリティ関数を提供します
-
-// max は2つの整数のうち大きい方を返す
-func max(a, b int) int {
+// Max は2つの整数の大きい方を返す
+func Max(a, b int) int {
 	if a > b {
 		return a
 	}
 	return b
 }
 
-// min は2つの整数のうち小さい方を返す
-func min(a, b int) int {
+// Min は2つの整数の小さい方を返す
+func Min(a, b int) int {
 	if a < b {
 		return a
 	}
 	return b
+}
+
+// Abs は整数の絶対値を返す
+func Abs(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
 }

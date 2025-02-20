@@ -16,17 +16,38 @@ const (
 	BufferMoveCursor BufferOperationType = "move_cursor"
 	// BufferRangeModified は範囲変更操作
 	BufferRangeModified BufferOperationType = "range_modified"
+	// BufferStateChange はバッファの状態変更操作
+	BufferStateChange BufferOperationType = "state_change"
 )
 
-// BufferEvent はバッファ操作イベントを表す
-type BufferEvent struct {
-	BaseEvent
-	Operation BufferOperationType
-	Position  Position    // 操作が行われた位置
-	Data      interface{} // 操作に関連するデータ（文字、移動量など）
-	Pre       BufferState // 操作前の状態
-	Post      BufferState // 操作後の状態
-	Range     *Range      // 変更された範囲（オプショナル）
+// BufferChangeType は変更の種類を表す
+type BufferChangeType int
+
+const (
+	SingleLineEdit BufferChangeType = iota
+	MultiLineEdit
+	LineInsert
+	LineDelete
+	BlockOperation
+)
+
+// BufferEventSubType はバッファイベントのサブタイプを表す
+type BufferEventSubType int
+
+const (
+	BufferContentChanged BufferEventSubType = iota
+	BufferCursorMoved
+	BufferStructuralChange
+)
+
+// BufferChangeData はバッファの変更情報を保持する
+type BufferChangeData struct {
+	AffectedLines []int
+	ChangeType    BufferChangeType
+	StartLine     int
+	EndLine       int
+	IsStructural  bool
+	Operation     BufferOperationType
 }
 
 // Position はバッファ内の位置を表す
@@ -48,43 +69,142 @@ type BufferState struct {
 	Lines     []string // 影響を受けた行の範囲
 }
 
+// BufferEvent はバッファの変更を表すイベント
+type BufferEvent struct {
+	BaseEvent
+	SubType   BufferEventSubType
+	Data      interface{}
+	changes   []BufferChangeData
+	prevState BufferState
+	currState BufferState
+}
+
 // NewBufferEvent は新しいBufferEventを作成する
-func NewBufferEvent(op BufferOperationType, pos Position, data interface{}, pre, post BufferState) *BufferEvent {
+func NewBufferEvent(subType BufferEventSubType, data interface{}) *BufferEvent {
 	return &BufferEvent{
-		BaseEvent: NewBaseEvent(BufferEventType),
-		Operation: op,
-		Position:  pos,
+		BaseEvent: BaseEvent{Type: BufferEventType},
+		SubType:   subType,
 		Data:      data,
-		Pre:       pre,
-		Post:      post,
+		changes:   make([]BufferChangeData, 0),
 	}
 }
 
-// WithRange は変更範囲を設定したイベントを返す
-func (e *BufferEvent) WithRange(start, end Position) *BufferEvent {
-	e.Range = &Range{Start: start, End: end}
-	return e
+// NewBufferChangeEvent は変更情報を含むバッファイベントを作成する
+func NewBufferChangeEvent(op BufferOperationType, pos Position, data interface{}, prevState, currState BufferState) *BufferEvent {
+	event := &BufferEvent{
+		BaseEvent: BaseEvent{Type: BufferEventType},
+		SubType:   determineSubType(op),
+		Data:      data,
+		changes:   make([]BufferChangeData, 0),
+		prevState: prevState,
+		currState: currState,
+	}
+
+	// 変更データを追加
+	change := BufferChangeData{
+		ChangeType:   determineChangeType(op),
+		IsStructural: isStructuralOperation(op),
+		Operation:    op,
+		StartLine:    pos.Y,
+		EndLine:      pos.Y,
+	}
+
+	if prevState.Content != currState.Content {
+		change.AffectedLines = []int{pos.Y}
+	}
+
+	event.AddChange(change)
+	return event
 }
 
-// HasChanges はバッファの状態が変更されたかどうかを返す
+// determineSubType は操作タイプからサブタイプを決定する
+func determineSubType(op BufferOperationType) BufferEventSubType {
+	switch op {
+	case BufferMoveCursor:
+		return BufferCursorMoved
+	case BufferNewLine, BufferRangeModified:
+		return BufferStructuralChange
+	default:
+		return BufferContentChanged
+	}
+}
+
+// determineChangeType は操作タイプから変更タイプを決定する
+func determineChangeType(op BufferOperationType) BufferChangeType {
+	switch op {
+	case BufferInsertChar, BufferDeleteChar:
+		return SingleLineEdit
+	case BufferNewLine:
+		return LineInsert
+	case BufferRangeModified:
+		return BlockOperation
+	default:
+		return MultiLineEdit
+	}
+}
+
+// isStructuralOperation は構造的な変更を伴う操作かどうかを判定する
+func isStructuralOperation(op BufferOperationType) bool {
+	switch op {
+	case BufferNewLine, BufferRangeModified:
+		return true
+	default:
+		return false
+	}
+}
+
+// AddChange は変更情報を追加する
+func (e *BufferEvent) AddChange(change BufferChangeData) {
+	e.changes = append(e.changes, change)
+}
+
+// HasChanges は変更があるかどうかを返す
 func (e *BufferEvent) HasChanges() bool {
-	// コンテンツの比較
-	if e.Pre.Content != e.Post.Content {
-		return true
-	}
-	// ダーティフラグの比較
-	if e.Pre.IsDirty != e.Post.IsDirty {
-		return true
-	}
-	// カーソル位置の比較
-	if e.Pre.CursorPos != e.Post.CursorPos {
-		return true
-	}
-	// 行の内容の比較（スライスの比較）
-	if !compareStringSlices(e.Pre.Lines, e.Post.Lines) {
-		return true
+	return len(e.changes) > 0
+}
+
+// GetChanges は変更情報のスライスを返す
+func (e *BufferEvent) GetChanges() []BufferChangeData {
+	return e.changes
+}
+
+// IsStructuralChange は構造的な変更があるかどうかを返す
+func (e *BufferEvent) IsStructuralChange() bool {
+	for _, change := range e.changes {
+		if change.IsStructural {
+			return true
+		}
 	}
 	return false
+}
+
+// GetStates は前回と現在の状態を返す
+func (e *BufferEvent) GetStates() (BufferState, BufferState) {
+	return e.prevState, e.currState
+}
+
+// GetOperation は最初の変更の操作タイプを返す
+func (e *BufferEvent) GetOperation() BufferOperationType {
+	if len(e.changes) > 0 {
+		return e.changes[0].Operation
+	}
+	return ""
+}
+
+// GetAffectedLines は影響を受けた行の一覧を返す
+func (e *BufferEvent) GetAffectedLines() []int {
+	lines := make(map[int]bool)
+	for _, change := range e.changes {
+		for _, line := range change.AffectedLines {
+			lines[line] = true
+		}
+	}
+
+	result := make([]int, 0, len(lines))
+	for line := range lines {
+		result = append(result, line)
+	}
+	return result
 }
 
 // compareStringSlices は2つの文字列スライスを比較する

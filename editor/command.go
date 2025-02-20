@@ -1,21 +1,21 @@
 package editor
 
-// EditorCommand はエディタの操作を表すインターフェース
-type EditorCommand interface {
+// Command はエディタのコマンドを表すインターフェース
+type Command interface {
 	Execute() error
 }
 
-// EditorOperations はInputHandlerが必要とするエディタ操作を定義するインターフェース
+// EditorOperations はコマンドが必要とするエディタの操作を定義する
 type EditorOperations interface {
 	InsertChar(ch rune)
 	InsertChars(chars []rune) // 追加
 	DeleteChar()
-	MoveCursor(movement CursorMovement)
 	InsertNewline()
-	IsDirty() bool
-	SetDirty(bool)
+	MoveCursor(movement CursorMovement)
 	SaveFile() error
 	Quit()
+	IsDirty() bool
+	SetDirty(bool)
 	SetStatusMessage(format string, args ...interface{})
 	UpdateScroll()
 	GetCursor() Cursor
@@ -29,8 +29,8 @@ type InsertCharCommand struct {
 	char   rune
 }
 
-func NewInsertCharCommand(editor EditorOperations, char rune) *InsertCharCommand {
-	return &InsertCharCommand{editor: editor, char: char}
+func NewInsertCharCommand(editor EditorOperations, ch rune) *InsertCharCommand {
+	return &InsertCharCommand{editor: editor, char: ch}
 }
 
 func (c *InsertCharCommand) Execute() error {
@@ -50,22 +50,6 @@ func NewInsertCharsCommand(editor EditorOperations, chars ...rune) *InsertCharsC
 
 func (c *InsertCharsCommand) Execute() error {
 	c.editor.InsertChars(c.chars)
-	return nil
-}
-
-// MoveCursorCommand はカーソル移動コマンド
-type MoveCursorCommand struct {
-	editor   EditorOperations
-	movement CursorMovement
-}
-
-func NewMoveCursorCommand(editor EditorOperations, movement CursorMovement) *MoveCursorCommand {
-	return &MoveCursorCommand{editor: editor, movement: movement}
-}
-
-func (c *MoveCursorCommand) Execute() error {
-	c.editor.MoveCursor(c.movement)
-	c.editor.UpdateScroll()
 	return nil
 }
 
@@ -97,26 +81,23 @@ func (c *InsertNewlineCommand) Execute() error {
 	return nil
 }
 
-// QuitCommand は終了コマンド
-type QuitCommand struct {
-	editor EditorOperations
+// MoveCursorCommand はカーソル移動コマンド
+type MoveCursorCommand struct {
+	editor   EditorOperations
+	movement CursorMovement
 }
 
-func NewQuitCommand(editor EditorOperations) *QuitCommand {
-	return &QuitCommand{editor: editor}
+func NewMoveCursorCommand(editor EditorOperations, movement CursorMovement) *MoveCursorCommand {
+	return &MoveCursorCommand{editor: editor, movement: movement}
 }
 
-func (c *QuitCommand) Execute() error {
-	if c.editor.IsDirty() {
-		c.editor.SetStatusMessage("Warning! File has unsaved changes. Press Ctrl-Q or Ctrl-C again to quit.")
-		c.editor.SetDirty(false)
-		return nil
-	}
-	c.editor.Quit()
+func (c *MoveCursorCommand) Execute() error {
+	c.editor.MoveCursor(c.movement)
+	c.editor.UpdateScroll()
 	return nil
 }
 
-// SaveCommand は保存コマンド
+// SaveCommand はファイル保存コマンド
 type SaveCommand struct {
 	editor EditorOperations
 }
@@ -129,6 +110,57 @@ func (c *SaveCommand) Execute() error {
 	if err := c.editor.SaveFile(); err != nil {
 		c.editor.SetStatusMessage("Can't save! I/O error: %s", err)
 		return err
+	}
+	return nil
+}
+
+// QuitCommand は終了コマンド
+type QuitCommand struct {
+	editor EditorOperations
+}
+
+func NewQuitCommand(editor EditorOperations) *QuitCommand {
+	return &QuitCommand{editor: editor}
+}
+
+func (c *QuitCommand) Execute() error {
+	// isDirtyフラグを変更せずに終了
+	c.editor.Quit()
+	return nil
+}
+
+// InsertTabCommand はタブ挿入コマンド
+type InsertTabCommand struct {
+	editor EditorOperations
+}
+
+func NewInsertTabCommand(editor EditorOperations) *InsertTabCommand {
+	return &InsertTabCommand{editor: editor}
+}
+
+func (c *InsertTabCommand) Execute() error {
+	// タブは空白に展開
+	tabWidth := GetTabWidth()
+	for i := 0; i < tabWidth; i++ {
+		c.editor.InsertChar(' ')
+	}
+	return nil
+}
+
+// UndentCommand はアンインデントコマンド
+type UndentCommand struct {
+	editor EditorOperations
+}
+
+func NewUndentCommand(editor EditorOperations) *UndentCommand {
+	return &UndentCommand{editor: editor}
+}
+
+func (c *UndentCommand) Execute() error {
+	// 現在の行の先頭から適切な数の空白を削除
+	tabWidth := GetTabWidth()
+	for i := 0; i < tabWidth; i++ {
+		c.editor.DeleteChar()
 	}
 	return nil
 }

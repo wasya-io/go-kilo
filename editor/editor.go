@@ -101,30 +101,51 @@ func (e *Editor) setupEventHandlers() {
 
 // handleBufferEvent はバッファイベントを処理する
 func (e *Editor) handleBufferEvent(event *events.BufferEvent) {
-	// イベントの状態変更を確認
-	if !event.HasChanges() {
-		return // 状態に変更がない場合は何もしない
+	e.ui.BeginBatchUpdate()
+	defer e.ui.EndBatchUpdate()
+
+	switch event.SubType {
+	case events.BufferContentChanged:
+		if data, ok := event.Data.(string); ok {
+			e.UpdateScroll()
+			// テキスト変更はすべて再描画が必要
+			e.ui.QueueUpdate(AreaFull, MediumPriority, data)
+		}
+	case events.BufferCursorMoved:
+		if data, ok := event.Data.(events.Position); ok {
+			e.UpdateScroll()
+			// カーソル移動時は部分更新のみ
+			e.ui.QueueUpdate(AreaCursor, HighPriority, data)
+		}
+	case events.BufferStructuralChange:
+		e.UpdateScroll()
+		e.ui.QueueUpdate(AreaFull, MediumPriority, nil)
 	}
 
-	e.UpdateScroll()
-	// UIイベントを発行（画面更新用）
-	e.publishUIEvent(events.UIRefresh, nil)
+	// ステータスの更新も必要な場合
+	if event.HasChanges() {
+		e.ui.QueueUpdate(AreaStatus, LowPriority, nil)
+	}
 }
 
 // handleUIEvent はUIイベントを処理する
 func (e *Editor) handleUIEvent(event *events.UIEvent) {
 	switch event.SubType {
 	case events.UIRefresh:
-		// 画面の更新のみを行う（新たなイベントは発行しない）
 		e.RefreshScreen()
 	case events.UIScroll:
-		// スクロールイベントの場合は画面の更新のみ
-		e.RefreshScreen()
+		if data, ok := event.Data.(events.ScrollData); ok {
+			e.ui.handleScrollEvent(data)
+			e.RefreshScreen()
+		}
 	case events.UIStatusMessage:
 		if data, ok := event.Data.(events.StatusMessageData); ok {
-			e.ui.message = data.Message
-			e.ui.messageArgs = make([]interface{}, len(data.Args))
-			copy(e.ui.messageArgs, data.Args)
+			e.ui.SetMessage(data.Message, data.Args...)
+			e.RefreshScreen()
+		}
+	case events.UICursorUpdate:
+		if data, ok := event.Data.(events.Position); ok {
+			e.buffer.SetCursor(data.X, data.Y)
 			e.RefreshScreen()
 		}
 	}
@@ -134,24 +155,28 @@ func (e *Editor) handleUIEvent(event *events.UIEvent) {
 func (e *Editor) handleFileEvent(event *events.FileEvent) {
 	switch event.SubType {
 	case events.FileOpen:
-		if event.Error != nil {
-			e.setStatusMessage("Error opening file: %v", event.Error)
+		if event.HasError() {
+			e.setStatusMessage("Error opening file: %v", event.GetError())
 		} else {
-			e.setStatusMessage("File loaded: %s", event.Filename)
+			e.buffer.LoadContent(event.GetContent())
+			e.setStatusMessage("File loaded: %s", event.GetFilename())
 		}
 	case events.FileSave:
-		if event.Error != nil {
-			e.setStatusMessage("Error saving file: %v", event.Error)
+		if event.HasError() {
+			e.setStatusMessage("Error saving file: %v", event.GetError())
 		} else {
-			e.setStatusMessage("File saved: %s", event.Filename)
+			e.buffer.SetDirty(false)
+			e.setStatusMessage("File saved: %s", event.GetFilename())
 		}
 	}
 }
 
 // publishUIEvent はUIイベントを発行する
-func (e *Editor) publishUIEvent(eventType events.SubEventType, data interface{}) {
-	event := events.NewUIEvent(eventType, data)
-	e.eventManager.Publish(event)
+func (e *Editor) publishUIEvent(subType events.UIEventSubType, data interface{}) {
+	if e.eventManager != nil {
+		event := events.NewUIEvent(subType, data)
+		e.eventManager.Publish(event)
+	}
 }
 
 // Cleanup は終了時の後処理を行う
@@ -165,8 +190,17 @@ func (e *Editor) Cleanup() {
 
 // RefreshScreen は画面を更新する
 func (e *Editor) RefreshScreen() error {
-	// スクロール位置の更新はProcessKeypress内で行うため、ここでは行わない
-	return e.ui.RefreshScreen(e.buffer, e.fileManager.GetFilename(), e.rowOffset, e.colOffset)
+	// UI更新の前にスクロール位置を更新
+	e.UpdateScroll()
+
+	// UIの更新処理を実行
+	err := e.ui.RefreshScreen(e.buffer, e.fileManager.GetFilename(), e.rowOffset, e.colOffset)
+	if err != nil {
+		return err
+	}
+
+	// メッセージ表示後は即座にフラッシュする
+	return e.ui.Flush()
 }
 
 // ProcessKeypress はキー入力を処理する
@@ -176,14 +210,14 @@ func (e *Editor) ProcessKeypress() error {
 		return err
 	}
 
+	// 画面更新を必ず行う（コマンドの有無に関わらず）
+	defer e.RefreshScreen()
+
 	if command != nil {
 		// コマンドを実行
 		if err := command.Execute(); err != nil {
 			return err
 		}
-
-		// 画面更新
-		return e.RefreshScreen()
 	}
 
 	return nil
@@ -269,11 +303,11 @@ func (e *Editor) SaveFile() error {
 
 // setStatusMessage はステータスメッセージを設定する（非公開メソッド）
 func (e *Editor) setStatusMessage(format string, args ...interface{}) {
-	// ステータスメッセージイベントを発行（型キャストを修正）
-	e.publishUIEvent(events.UIStatusMessage, events.StatusMessageData{
-		Message: format,
-		Args:    args,
-	})
+	// UIコンポーネントのSetMessageメソッドを呼び出す
+	e.ui.SetMessage(format, args...)
+
+	// 即座に画面を更新して変更を反映
+	e.RefreshScreen()
 }
 
 // SetStatusMessage はステータスメッセージを設定する（EditorOperations用の公開メソッド）
@@ -288,18 +322,25 @@ func (e *Editor) GetConfig() *Config {
 
 func (e *Editor) InsertChar(ch rune) {
 	e.buffer.InsertChar(ch)
+	e.RefreshScreen()
 }
 
 func (e *Editor) DeleteChar() {
 	e.buffer.DeleteChar()
+	e.RefreshScreen()
 }
 
 func (e *Editor) MoveCursor(movement CursorMovement) {
+	// バッファのカーソル移動を実行
 	e.buffer.MoveCursor(movement)
+	// スクロール位置の更新
+	e.UpdateScroll()
+	// イベント発行は buffer.MoveCursor 内で行われるため、ここでは不要
 }
 
 func (e *Editor) InsertNewline() {
 	e.buffer.InsertNewline()
+	e.RefreshScreen()
 }
 
 func (e *Editor) IsDirty() bool {

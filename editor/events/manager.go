@@ -1,70 +1,166 @@
 package events
 
 import (
+	"fmt"
 	"sync"
 )
 
-// EventHandler はイベントを処理するハンドラ関数の型
-type EventHandler func(Event)
+// EventSubscriber はイベントのサブスクライバーを表す型
+type EventSubscriber func(Event)
 
-// EventManager はイベントの発行と購読を管理する
+// UpdateQueue はイベントの更新キューを管理する構造体
+type UpdateQueue struct {
+	queue []Event
+	mu    sync.Mutex
+}
+
+// NewUpdateQueue は新しいUpdateQueueを作成する
+func NewUpdateQueue() *UpdateQueue {
+	return &UpdateQueue{
+		queue: make([]Event, 0),
+	}
+}
+
+// Add はキューにイベントを追加する
+func (q *UpdateQueue) Add(event Event) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.queue = append(q.queue, event)
+}
+
+// Flush はキューを処理して空にする
+func (q *UpdateQueue) Flush(handler func(Event)) {
+	q.mu.Lock()
+	pendingEvents := q.queue
+	q.queue = make([]Event, 0)
+	q.mu.Unlock()
+
+	for _, event := range pendingEvents {
+		handler(event)
+	}
+}
+
+// EventManager はイベントの管理を行う
 type EventManager struct {
-	handlers map[EventType][]EventHandler
-	mu       sync.RWMutex
+	subscribers map[EventType][]EventSubscriber
+	mu          sync.RWMutex
+	batchMode   bool
+	batchEvents []Event
+	updateQueue *UpdateQueue
 }
 
 // NewEventManager は新しいEventManagerを作成する
 func NewEventManager() *EventManager {
 	return &EventManager{
-		handlers: make(map[EventType][]EventHandler),
+		subscribers: make(map[EventType][]EventSubscriber),
+		batchEvents: make([]Event, 0),
+		updateQueue: NewUpdateQueue(),
 	}
 }
 
-// Subscribe は指定されたイベントタイプのハンドラを登録する
-func (em *EventManager) Subscribe(eventType EventType, handler EventHandler) {
+// Subscribe はイベントタイプに対するサブスクライバーを登録する
+func (em *EventManager) Subscribe(eventType EventType, subscriber EventSubscriber) {
 	em.mu.Lock()
 	defer em.mu.Unlock()
 
-	// 重複登録を防ぐ
-	for _, h := range em.handlers[eventType] {
-		if &h == &handler {
-			return
-		}
+	if em.subscribers[eventType] == nil {
+		em.subscribers[eventType] = make([]EventSubscriber, 0)
 	}
-
-	em.handlers[eventType] = append(em.handlers[eventType], handler)
+	em.subscribers[eventType] = append(em.subscribers[eventType], subscriber)
 }
 
-// Unsubscribe は指定されたイベントタイプのハンドラを登録解除する
-func (em *EventManager) Unsubscribe(eventType EventType, handler EventHandler) {
+// Unsubscribe はイベントタイプに対するサブスクライバーを登録解除する
+func (em *EventManager) Unsubscribe(eventType EventType, subscriber EventSubscriber) {
 	em.mu.Lock()
 	defer em.mu.Unlock()
 
-	handlers := em.handlers[eventType]
-	for i, h := range handlers {
-		if &h == &handler {
-			em.handlers[eventType] = append(handlers[:i], handlers[i+1:]...)
-			break
+	if subscribers, ok := em.subscribers[eventType]; ok {
+		// サブスクライバーを検索して削除
+		for i, sub := range subscribers {
+			// 関数ポインタの比較は直接できないため、文字列表現を比較
+			if getFuncPtr(sub) == getFuncPtr(subscriber) {
+				// スライスから要素を削除
+				em.subscribers[eventType] = append(subscribers[:i], subscribers[i+1:]...)
+				break
+			}
 		}
 	}
 }
 
-// Publish はイベントを発行し、登録されているハンドラに通知する
+// getFuncPtr は関数のポインタを文字列として取得する
+func getFuncPtr(f interface{}) string {
+	return fmt.Sprintf("%v", f)
+}
+
+// Publish はイベントを発行する
 func (em *EventManager) Publish(event Event) {
 	em.mu.RLock()
-	handlers := em.handlers[event.Type()]
-	em.mu.RUnlock()
+	defer em.mu.RUnlock()
 
-	// ハンドラを同期的に実行
-	for _, handler := range handlers {
-		handler(event)
+	if em.batchMode {
+		em.batchEvents = append(em.batchEvents, event)
+		return
 	}
+
+	// 非バッチモードの場合は更新キューに追加
+	em.updateQueue.Add(event)
 }
 
-// Clear は全てのイベントハンドラの登録を解除する
-func (em *EventManager) Clear() {
+// ProcessUpdates は更新キューを処理する
+func (em *EventManager) ProcessUpdates() {
+	em.updateQueue.Flush(func(event Event) {
+		em.publishEvent(event)
+	})
+}
+
+// BeginBatch はバッチモードを開始する
+func (em *EventManager) BeginBatch() {
+	em.mu.Lock()
+	defer em.mu.Unlock()
+	em.batchMode = true
+}
+
+// EndBatch はバッチモードを終了し、蓄積されたイベントを発行する
+func (em *EventManager) EndBatch() {
 	em.mu.Lock()
 	defer em.mu.Unlock()
 
-	em.handlers = make(map[EventType][]EventHandler)
+	em.batchMode = false
+
+	// バッファイベントを優先して処理
+	for _, event := range em.batchEvents {
+		if event.GetType() == BufferEventType {
+			em.updateQueue.Add(event)
+		}
+	}
+
+	// その他のイベントを処理
+	for _, event := range em.batchEvents {
+		if event.GetType() != BufferEventType {
+			em.updateQueue.Add(event)
+		}
+	}
+
+	em.batchEvents = em.batchEvents[:0]
+
+	// 更新キューを処理
+	em.ProcessUpdates()
+}
+
+// publishEvent は単一のイベントを発行する
+func (em *EventManager) publishEvent(event Event) {
+	if subscribers, ok := em.subscribers[event.GetType()]; ok {
+		for _, subscriber := range subscribers {
+			subscriber(event)
+		}
+	}
+}
+
+// ClearBatch はバッチモードをキャンセルし、蓄積されたイベントをクリアする
+func (em *EventManager) ClearBatch() {
+	em.mu.Lock()
+	defer em.mu.Unlock()
+
+	em.batchMode = false
+	em.batchEvents = em.batchEvents[:0]
 }
