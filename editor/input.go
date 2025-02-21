@@ -292,10 +292,10 @@ func (h *InputHandler) createControlKeyCommand(key Key) Command {
 	switch key {
 	case KeyCtrlS:
 		return NewSaveCommand(h.editor)
-	case KeyCtrlQ:
+	case KeyCtrlQ, KeyCtrlC:
 		if h.editor.IsDirty() && !h.quitWarningShown {
 			h.quitWarningShown = true
-			h.editor.SetStatusMessage("Warning! File has unsaved changes. Press Ctrl-Q again to quit.")
+			h.editor.SetStatusMessage("Warning! File has unsaved changes. Press Ctrl-Q or Ctrl-C again to quit.")
 			return nil
 		}
 		return NewQuitCommand(h.editor)
