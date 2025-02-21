@@ -435,6 +435,9 @@ func (e *Editor) SaveFile() error {
 
 // setStatusMessage はステータスメッセージを設定する（非公開メソッド）
 func (e *Editor) setStatusMessage(format string, args ...interface{}) {
+	if e.config.DebugMode {
+		format = "[in Debug] " + format
+	}
 	// UIコンポーネントのSetMessageメソッドを呼び出す
 	e.ui.SetMessage(format, args...)
 

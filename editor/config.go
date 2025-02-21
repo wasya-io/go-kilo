@@ -26,12 +26,7 @@ type Config struct {
 	TabWidth     int
 	SmoothScroll bool
 	ScrollSteps  int
-}
-
-var defaultConfig = Config{
-	TabWidth:     defaultTabWidth,
-	SmoothScroll: true,
-	ScrollSteps:  3,
+	DebugMode    bool
 }
 
 // LoadConfig は.envファイルから設定を読み込む
@@ -43,6 +38,7 @@ func LoadConfig() *Config {
 		TabWidth:     defaultTabWidth,
 		SmoothScroll: true,
 		ScrollSteps:  3,
+		DebugMode:    false,
 	}
 
 	// TAB_WIDTHの環境変数を読み込む
@@ -62,6 +58,11 @@ func LoadConfig() *Config {
 		if val, err := strconv.Atoi(steps); err == nil && val > 0 {
 			config.ScrollSteps = val
 		}
+	}
+
+	// DEBUG環境変数から設定を読み込む
+	if debug := os.Getenv("DEBUG"); debug != "" {
+		config.DebugMode = debug == "true"
 	}
 
 	return config
