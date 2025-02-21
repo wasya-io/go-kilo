@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/wasya-io/go-kilo/editor/events"
+	"github.com/wasya-io/go-kilo/editor/logger"
 	"golang.org/x/sys/unix"
 )
 
@@ -29,6 +30,7 @@ type Editor struct {
 	termState    *terminalState
 	cleanupOnce  sync.Once
 	cleanupChan  chan struct{}
+	logger       *logger.Logger
 }
 
 // New は新しいEditorインスタンスを作成する
@@ -48,6 +50,7 @@ func New(testMode bool) (*Editor, error) {
 	screenCols := int(ws.Col)
 
 	eventManager := events.NewEventManager()
+	config := LoadConfig()
 
 	e := &Editor{
 		ui:           NewUI(screenRows, screenCols, eventManager), // eventManagerを追加
@@ -55,10 +58,11 @@ func New(testMode bool) (*Editor, error) {
 		buffer:       NewBuffer(eventManager), // eventManagerを引数として渡す
 		rowOffset:    0,
 		colOffset:    0,
-		config:       LoadConfig(),
+		config:       config,
 		eventManager: eventManager,
 		isQuitting:   false,
 		cleanupChan:  make(chan struct{}),
+		logger:       logger.New(config.DebugMode),
 	}
 
 	e.fileManager = NewFileManager(e.buffer, eventManager)
@@ -307,6 +311,9 @@ func (e *Editor) publishUIEvent(subType events.UIEventSubType, data interface{})
 // Cleanup は終了時の後処理を行う
 func (e *Editor) Cleanup() {
 	e.cleanupOnce.Do(func() {
+		// 最後にログをフラッシュする
+		e.logger.Flush()
+
 		// 端末の状態を復元
 		if e.termState != nil {
 			e.termState.disableRawMode()
@@ -341,6 +348,7 @@ func (e *Editor) RefreshScreen() error {
 func (e *Editor) ProcessKeypress() error {
 	command, err := e.input.HandleKeypress()
 	if err != nil {
+		e.logger.Log("error", fmt.Sprintf("Keypress error: %v", err))
 		return err
 	}
 
@@ -349,6 +357,7 @@ func (e *Editor) ProcessKeypress() error {
 
 	if command != nil {
 		// コマンドを実行
+		e.logger.Log("command", fmt.Sprintf("Executed command: %T", command))
 		if err := command.Execute(); err != nil {
 			return err
 		}
@@ -413,7 +422,10 @@ func (e *Editor) Quit() {
 
 // OpenFile は指定されたファイルを読み込む
 func (e *Editor) OpenFile(filename string) error {
+	e.logger.Log("file", fmt.Sprintf("Opening file: %s", filename))
+
 	if err := e.fileManager.OpenFile(filename); err != nil {
+		e.logger.Log("error", fmt.Sprintf("Failed to open file: %s, error: %v", filename, err))
 		return err
 	}
 	e.setStatusMessage("File loaded")
@@ -422,11 +434,15 @@ func (e *Editor) OpenFile(filename string) error {
 
 // SaveFile は現在の内容をファイルに保存する
 func (e *Editor) SaveFile() error {
+	e.logger.Log("file", "Saving current file")
+
 	if err := e.fileManager.SaveCurrentFile(); err != nil {
 		if err == ErrNoFilename {
+			e.logger.Log("error", "No filename specified for save")
 			e.setStatusMessage("No filename")
 			return nil
 		}
+		e.logger.Log("error", fmt.Sprintf("Failed to save file: %v", err))
 		return err
 	}
 	e.setStatusMessage("File saved")
@@ -456,24 +472,25 @@ func (e *Editor) GetConfig() *Config {
 }
 
 func (e *Editor) InsertChar(ch rune) {
+	e.logger.Log("edit", fmt.Sprintf("Inserting character: %c", ch))
 	e.buffer.InsertChar(ch)
 	e.RefreshScreen()
 }
 
 func (e *Editor) DeleteChar() {
+	e.logger.Log("edit", "Deleting character")
 	e.buffer.DeleteChar()
 	e.RefreshScreen()
 }
 
 func (e *Editor) MoveCursor(movement CursorMovement) {
-	// バッファのカーソル移動を実行
+	e.logger.Log("cursor", fmt.Sprintf("Moving cursor: %v", movement))
 	e.buffer.MoveCursor(movement)
-	// スクロール位置の更新
 	e.UpdateScroll()
-	// イベント発行は buffer.MoveCursor 内で行われるため、ここでは不要
 }
 
 func (e *Editor) InsertNewline() {
+	e.logger.Log("edit", "Inserting newline")
 	e.buffer.InsertNewline()
 	e.RefreshScreen()
 }
@@ -556,6 +573,9 @@ func (e *Editor) monitorErrors() {
 func (e *Editor) Run() error {
 	defer e.Cleanup()
 
+	e.logger.Log("system", "Editor starting")
+	defer e.logger.Log("system", "Editor shutting down")
+
 	// 初期表示
 	if err := e.RefreshScreen(); err != nil {
 		return err
@@ -567,6 +587,7 @@ func (e *Editor) Run() error {
 			return nil
 		default:
 			if err := e.ProcessKeypress(); err != nil {
+				e.logger.Log("error", fmt.Sprintf("Main loop error: %v", err))
 				return err
 			}
 		}
