@@ -8,6 +8,7 @@ const (
 	KeyEventSpecial
 	KeyEventControl
 	KeyEventIME
+	KeyEventMouse // 追加: マウスイベント
 )
 
 // Key は特殊キーの種類を表す
@@ -32,7 +33,23 @@ const (
 	KeyEnd
 	KeyPageUp
 	KeyPageDown
+	KeyMouseWheel // 追加: マウスホイール
 )
+
+// MouseAction はマウスイベントの種類を表す
+type MouseAction int
+
+const (
+	MouseWheelUp MouseAction = iota
+	MouseWheelDown
+)
+
+// MouseEventData はマウスイベントのデータを表す
+type MouseEventData struct {
+	Action MouseAction
+	Row    int
+	Col    int
+}
 
 // ModifierKeys はキーの修飾子を表す
 type ModifierKeys uint8
@@ -54,6 +71,7 @@ type InputEvent struct {
 	Modifiers    ModifierKeys
 	IsComposing  bool
 	ComposedText string
+	MouseData    *MouseEventData // 追加: マウスイベントデータ
 }
 
 // NewInputEvent は新しいInputEventを作成する
@@ -77,6 +95,16 @@ func (e *InputEvent) WithModifiers(mods ModifierKeys) *InputEvent {
 func (e *InputEvent) WithIMEComposition(isComposing bool, text string) *InputEvent {
 	e.IsComposing = isComposing
 	e.ComposedText = text
+	return e
+}
+
+// WithMouseData はマウスイベントデータを設定する
+func (e *InputEvent) WithMouseData(action MouseAction, row, col int) *InputEvent {
+	e.MouseData = &MouseEventData{
+		Action: action,
+		Row:    row,
+		Col:    col,
+	}
 	return e
 }
 

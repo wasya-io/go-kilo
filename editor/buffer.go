@@ -217,34 +217,27 @@ func (b *Buffer) MoveCursor(movement CursorMovement) {
 		return
 	}
 
+	// マウスホイール用とカーソルキー用で分岐
 	switch movement {
-	case CursorLeft:
-		if b.cursor.X > 0 {
-			// 左の文字位置に移動（シンプルに1つ前に移動）
-			b.cursor.X--
-		} else if b.cursor.Y > 0 {
-			// 前の行の末尾に移動
-			b.cursor.Y--
-			targetRow := b.getRow(b.cursor.Y)
-			if targetRow != nil {
-				b.cursor.X = targetRow.GetRuneCount()
-			}
-		}
-	case CursorRight:
-		maxX := currentRow.GetRuneCount()
-		if b.cursor.X < maxX {
-			// 右の文字位置に移動（シンプルに1つ次に移動）
-			b.cursor.X++
-		} else if b.cursor.Y < len(b.content)-1 {
-			// 次の行の先頭に移動
-			b.cursor.Y++
-			b.cursor.X = 0
-		}
 	case CursorUp:
 		if b.cursor.Y > 0 {
 			// 現在の表示位置を維持
 			currentVisualX := currentRow.OffsetToScreenPosition(b.cursor.X)
 			b.cursor.Y--
+			targetRow := b.getRow(b.cursor.Y)
+			if targetRow != nil {
+				b.cursor.X = targetRow.ScreenPositionToOffset(currentVisualX)
+			}
+		}
+	case MouseWheelUp:
+		targetY := b.cursor.Y - 3 // 3行ずつスクロール
+		if targetY < 0 {
+			targetY = 0
+		}
+		if b.cursor.Y > 0 {
+			// 現在の表示位置を維持
+			currentVisualX := currentRow.OffsetToScreenPosition(b.cursor.X)
+			b.cursor.Y = targetY
 			targetRow := b.getRow(b.cursor.Y)
 			if targetRow != nil {
 				b.cursor.X = targetRow.ScreenPositionToOffset(currentVisualX)
@@ -259,6 +252,38 @@ func (b *Buffer) MoveCursor(movement CursorMovement) {
 			if targetRow != nil {
 				b.cursor.X = targetRow.ScreenPositionToOffset(currentVisualX)
 			}
+		}
+	case MouseWheelDown:
+		targetY := b.cursor.Y + 3 // 3行ずつスクロール
+		if targetY >= len(b.content) {
+			targetY = len(b.content) - 1
+		}
+		if b.cursor.Y < len(b.content)-1 {
+			// 現在の表示位置を維持
+			currentVisualX := currentRow.OffsetToScreenPosition(b.cursor.X)
+			b.cursor.Y = targetY
+			targetRow := b.getRow(b.cursor.Y)
+			if targetRow != nil {
+				b.cursor.X = targetRow.ScreenPositionToOffset(currentVisualX)
+			}
+		}
+	case CursorLeft:
+		if b.cursor.X > 0 {
+			b.cursor.X--
+		} else if b.cursor.Y > 0 {
+			b.cursor.Y--
+			targetRow := b.getRow(b.cursor.Y)
+			if targetRow != nil {
+				b.cursor.X = targetRow.GetRuneCount()
+			}
+		}
+	case CursorRight:
+		maxX := currentRow.GetRuneCount()
+		if b.cursor.X < maxX {
+			b.cursor.X++
+		} else if b.cursor.Y < len(b.content)-1 {
+			b.cursor.Y++
+			b.cursor.X = 0
 		}
 	}
 

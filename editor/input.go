@@ -10,9 +10,12 @@ import (
 
 // KeyEvent はキー入力イベントを表す
 type KeyEvent struct {
-	Type KeyEventType
-	Rune rune // 通常の文字入力の場合
-	Key  Key  // 特殊キーの場合
+	Type        KeyEventType
+	Rune        rune        // 通常の文字入力の場合
+	Key         Key         // 特殊キーの場合
+	MouseRow    int         // マウスイベントの行位置
+	MouseCol    int         // マウスイベントの列位置
+	MouseAction MouseAction // マウスイベントの種類（型をintからMouseActionに変更）
 }
 
 // KeyEventType はキーイベントの種類を表す
@@ -22,6 +25,7 @@ const (
 	KeyEventChar KeyEventType = iota + 1 // 1から開始
 	KeyEventSpecial
 	KeyEventControl
+	KeyEventMouse
 )
 
 // Key は特殊キーの種類を表す
@@ -41,6 +45,15 @@ const (
 	KeyEsc
 	KeyTab
 	KeyShiftTab // Add Shift+Tab key
+	KeyMouseWheel
+)
+
+// MouseAction はマウスアクションの種類を表す
+type MouseAction int
+
+const (
+	MouseScrollUp MouseAction = iota + 1
+	MouseScrollDown
 )
 
 // StandardKeyReader は標準入力からキーを読み取る実装
@@ -104,6 +117,31 @@ func (kr *StandardKeyReader) ReadKey() (KeyEvent, error) {
 				return KeyEvent{Type: KeyEventSpecial, Key: KeyArrowLeft}, nil
 			case 'Z':
 				return KeyEvent{Type: KeyEventSpecial, Key: KeyShiftTab}, nil
+			case 'M', '<':
+				// マウスイベントの処理
+				if n >= 6 && buf[2] == '<' {
+					// SGR形式のマウスイベント
+					var cb, cx, cy int
+					if _, err := fmt.Sscanf(string(buf[3:n]), "%d;%d;%d", &cb, &cx, &cy); err == nil {
+						if cb == 64 { // スクロールアップ
+							return KeyEvent{
+								Type:        KeyEventMouse,
+								Key:         KeyMouseWheel,
+								MouseRow:    cy - 1,
+								MouseCol:    cx - 1,
+								MouseAction: MouseScrollUp,
+							}, nil
+						} else if cb == 65 { // スクロールダウン
+							return KeyEvent{
+								Type:        KeyEventMouse,
+								Key:         KeyMouseWheel,
+								MouseRow:    cy - 1,
+								MouseCol:    cx - 1,
+								MouseAction: MouseScrollDown,
+							}, nil
+						}
+					}
+				}
 			}
 		}
 		return KeyEvent{}, fmt.Errorf("unknown escape sequence")
@@ -200,80 +238,29 @@ func (h *InputHandler) HandleKeypress() (Command, error) {
 func (h *InputHandler) createCommand(event KeyEvent) (Command, error) {
 	switch event.Type {
 	case KeyEventChar, KeyEventSpecial:
-		// 通常の文字入力または特殊キー入力時は警告状態をクリア
+		// 警告状態をクリア
 		if h.quitWarningShown {
 			h.quitWarningShown = false
 			h.editor.SetStatusMessage("")
 		}
 		if event.Type == KeyEventChar {
-			// UTF-8文字の処理
-			if event.Rune >= 0x80 {
-				// マルチバイト文字を直接挿入
-				return NewInsertCharCommand(h.editor, event.Rune), nil
-			}
 			return NewInsertCharCommand(h.editor, event.Rune), nil
 		}
 		return h.createSpecialKeyCommand(event.Key), nil
 	case KeyEventControl:
-		switch event.Key {
-		case KeyCtrlC:
-			isDirty := h.editor.IsDirty()
-			if h.quitWarningShown {
-				h.quitWarningShown = false // リセット
-				return NewQuitCommand(h.editor), nil
+		return h.createControlKeyCommand(event.Key), nil
+	case KeyEventMouse:
+		if event.Key == KeyMouseWheel {
+			// マウスホイールイベントは専用のカーソル移動コマンドを使用
+			switch event.MouseAction {
+			case MouseScrollUp:
+				return NewMoveCursorCommand(h.editor, MouseWheelUp), nil
+			case MouseScrollDown:
+				return NewMoveCursorCommand(h.editor, MouseWheelDown), nil
 			}
-			// 未編集なら即終了、編集済みなら警告表示
-			if !isDirty {
-				return NewQuitCommand(h.editor), nil
-			}
-			h.quitWarningShown = true
-			h.editor.SetStatusMessage("Warning! File has unsaved changes. Press Ctrl-C again to quit.")
-			return nil, nil
-		case KeyCtrlS, KeyCtrlQ:
-			return h.createControlKeyCommand(event.Key), nil
-		default:
-			// 他のコントロールキーの場合は警告状態をクリア
-			if h.quitWarningShown {
-				h.quitWarningShown = false
-				h.editor.SetStatusMessage("")
-			}
-			return nil, nil
 		}
-	default:
-		return nil, nil
 	}
-}
-
-// getKeyName は特殊キーの名前を返す
-func (h *InputHandler) getKeyName(key Key) string {
-	switch key {
-	case KeyArrowUp:
-		return "↑"
-	case KeyArrowDown:
-		return "↓"
-	case KeyArrowLeft:
-		return "←"
-	case KeyArrowRight:
-		return "→"
-	case KeyBackspace:
-		return "Backspace"
-	case KeyEnter:
-		return "Enter"
-	case KeyTab:
-		return "Tab"
-	case KeyShiftTab:
-		return "Shift+Tab"
-	case KeyCtrlC:
-		return "Ctrl+C"
-	case KeyCtrlQ:
-		return "Ctrl+Q"
-	case KeyCtrlS:
-		return "Ctrl+S"
-	case KeyEsc:
-		return "Esc"
-	default:
-		return fmt.Sprintf("Key(%d)", key)
-	}
+	return nil, nil
 }
 
 // createSpecialKeyCommand は特殊キーに対応するコマンドを作成する

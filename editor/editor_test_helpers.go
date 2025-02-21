@@ -14,10 +14,12 @@ type KeyReader interface {
 type CursorMovement byte
 
 const (
-	CursorUp    CursorMovement = 'A'
-	CursorDown  CursorMovement = 'B'
-	CursorRight CursorMovement = 'C'
-	CursorLeft  CursorMovement = 'D'
+	CursorUp       CursorMovement = 'A'
+	CursorDown     CursorMovement = 'B'
+	CursorRight    CursorMovement = 'C'
+	CursorLeft     CursorMovement = 'D'
+	MouseWheelUp   CursorMovement = 'U' // マウスホイールでの上方向スクロール
+	MouseWheelDown CursorMovement = 'V' // マウスホイールでの下方向スクロール
 )
 
 // EditorTestHelper はテスト用のヘルパーメソッドを提供する
@@ -148,7 +150,6 @@ func (e *Editor) TestMoveCursorByByte(direction byte) error {
 	case 'C': // Right
 		e.buffer.MoveCursor(CursorRight)
 	case 'D': // Left
-		e.buffer.MoveCursor(CursorLeft)
 	default:
 		return fmt.Errorf("unknown direction: %c", direction)
 	}
