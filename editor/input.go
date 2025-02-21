@@ -46,6 +46,7 @@ const (
 	KeyTab
 	KeyShiftTab // Add Shift+Tab key
 	KeyMouseWheel
+	KeyMouseClick // 追加：マウスクリック用のキー
 )
 
 // MouseAction はマウスアクションの種類を表す
@@ -54,6 +55,9 @@ type MouseAction int
 const (
 	MouseScrollUp MouseAction = iota + 1
 	MouseScrollDown
+	MouseLeftClick   // 追加：左クリック
+	MouseRightClick  // 追加：右クリック
+	MouseMiddleClick // 追加：中クリック
 )
 
 // StandardKeyReader は標準入力からキーを読み取る実装
@@ -123,7 +127,8 @@ func (kr *StandardKeyReader) ReadKey() (KeyEvent, error) {
 					// SGR形式のマウスイベント
 					var cb, cx, cy int
 					if _, err := fmt.Sscanf(string(buf[3:n]), "%d;%d;%d", &cb, &cx, &cy); err == nil {
-						if cb == 64 { // スクロールアップ
+						switch cb {
+						case 64: // スクロールアップ
 							return KeyEvent{
 								Type:        KeyEventMouse,
 								Key:         KeyMouseWheel,
@@ -131,7 +136,7 @@ func (kr *StandardKeyReader) ReadKey() (KeyEvent, error) {
 								MouseCol:    cx - 1,
 								MouseAction: MouseScrollUp,
 							}, nil
-						} else if cb == 65 { // スクロールダウン
+						case 65: // スクロールダウン
 							return KeyEvent{
 								Type:        KeyEventMouse,
 								Key:         KeyMouseWheel,
@@ -139,9 +144,35 @@ func (kr *StandardKeyReader) ReadKey() (KeyEvent, error) {
 								MouseCol:    cx - 1,
 								MouseAction: MouseScrollDown,
 							}, nil
+						case 0: // 左クリック
+							return KeyEvent{
+								Type:        KeyEventMouse,
+								Key:         KeyMouseClick,
+								MouseRow:    cy - 1,
+								MouseCol:    cx - 1,
+								MouseAction: MouseLeftClick,
+							}, nil
+						case 2: // 右クリック
+							return KeyEvent{
+								Type:        KeyEventMouse,
+								Key:         KeyMouseClick,
+								MouseRow:    cy - 1,
+								MouseCol:    cx - 1,
+								MouseAction: MouseRightClick,
+							}, nil
+						case 1: // 中クリック
+							return KeyEvent{
+								Type:        KeyEventMouse,
+								Key:         KeyMouseClick,
+								MouseRow:    cy - 1,
+								MouseCol:    cx - 1,
+								MouseAction: MouseMiddleClick,
+							}, nil
 						}
 					}
 				}
+				// 不明なマウスイベントは無視
+				return KeyEvent{}, fmt.Errorf("unknown mouse event")
 			}
 		}
 		return KeyEvent{}, fmt.Errorf("unknown escape sequence")
@@ -258,6 +289,10 @@ func (h *InputHandler) createCommand(event KeyEvent) (Command, error) {
 			case MouseScrollDown:
 				return NewMoveCursorCommand(h.editor, MouseWheelDown), nil
 			}
+		} else if event.Key == KeyMouseClick {
+			// マウスクリックイベントは現時点では無視
+			// 必要に応じて適切なコマンドを実装できます
+			return nil, nil
 		}
 	}
 	return nil, nil

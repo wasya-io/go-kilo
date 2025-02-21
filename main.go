@@ -4,58 +4,63 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"syscall"
 
 	"github.com/wasya-io/go-kilo/editor"
 )
 
-func die(err error) {
-	fmt.Print("\x1b[2J")
-	fmt.Print("\x1b[H")
-	fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-	os.Exit(1)
-}
-
 func main() {
-	// エディタを初期化
+	// グローバルなパニックハンドラを設定
+	defer func() {
+		if r := recover(); r != nil {
+			// 端末をリセットするエスケープシーケンス
+			fmt.Print("\x1b[?1000l\x1b[?1002l\x1b[?1015l\x1b[?1006l") // マウスモードを無効化
+			fmt.Print("\x1b[2J\x1b[H")                                // 画面をクリア
+			fmt.Print("\x1b[?25h")                                    // カーソルを表示
+
+			// エラー情報を出力
+			fmt.Fprintf(os.Stderr, "Editor crashed: %v\n", r)
+			fmt.Fprintf(os.Stderr, "Stack trace:\n%s", debug.Stack())
+			os.Exit(1)
+		}
+	}()
+
+	// シグナルハンドリングの設定
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	// エディタの初期化
 	ed, err := editor.New(false)
 	if err != nil {
 		die(err)
 	}
-	defer ed.Cleanup()
+	defer ed.Cleanup() // 確実なクリーンアップを保証
 
-	// コマンドライン引数からファイル名を取得
+	// コマンドライン引数の処理
 	if len(os.Args) > 1 {
 		if err := ed.OpenFile(os.Args[1]); err != nil {
 			die(err)
 		}
 	}
 
-	// 初期画面を表示
-	if err := ed.RefreshScreen(); err != nil {
-		die(err)
-	}
-
-	// シグナルハンドリングのための準備
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-
-	// シグナルを受け取った際の処理
+	// シグナル処理用のゴルーチン
 	go func() {
 		<-sigChan
-		ed.Quit() // 終了メソッドを使用
+		ed.Cleanup() // クリーンアップを実行
+		os.Exit(0)
 	}()
 
 	// エディタのメインループ
-	for {
-		select {
-		case <-ed.QuitChan():
-			return // cleanup関数が遅延実行される
-		default:
-			// キー入力を処理（画面更新も含む）
-			if err := ed.ProcessKeypress(); err != nil {
-				die(err)
-			}
-		}
+	if err := ed.Run(); err != nil {
+		ed.Cleanup() // エラー時もクリーンアップを実行
+		die(err)
 	}
+}
+
+func die(err error) {
+	fmt.Print("\x1b[2J") // 画面をクリア
+	fmt.Print("\x1b[H")  // カーソルを左上に移動
+	fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+	os.Exit(1)
 }

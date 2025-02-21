@@ -3,7 +3,10 @@ package editor
 import (
 	"fmt"
 	"os"
+	"os/signal"
 	"runtime/debug"
+	"sync"
+	"syscall"
 	"time"
 
 	"github.com/wasya-io/go-kilo/editor/events"
@@ -23,6 +26,9 @@ type Editor struct {
 	input        *InputHandler
 	config       *Config
 	eventManager *events.EventManager // 追加: イベントマネージャー
+	termState    *terminalState
+	cleanupOnce  sync.Once
+	cleanupChan  chan struct{}
 }
 
 // New は新しいEditorインスタンスを作成する
@@ -52,6 +58,7 @@ func New(testMode bool) (*Editor, error) {
 		config:       LoadConfig(),
 		eventManager: eventManager,
 		isQuitting:   false,
+		cleanupChan:  make(chan struct{}),
 	}
 
 	e.fileManager = NewFileManager(e.buffer, eventManager)
@@ -73,6 +80,32 @@ func New(testMode bool) (*Editor, error) {
 			return nil, err
 		}
 		e.term = term
+		e.termState = term
+
+		// パニックリカバリーとクリーンアップの設定
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					// パニック時の端末状態復元を保証
+					e.Cleanup()
+					// スタックトレースとエラー情報を出力
+					fmt.Fprintf(os.Stderr, "Editor panic: %v\n", r)
+					debug.PrintStack()
+					os.Exit(1)
+				}
+			}()
+
+			// シグナル処理
+			sigChan := make(chan os.Signal, 1)
+			signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+			select {
+			case <-sigChan:
+				e.Cleanup()
+				os.Exit(0)
+			case <-e.cleanupChan:
+				return
+			}
+		}()
 	}
 
 	return e, nil
@@ -273,11 +306,20 @@ func (e *Editor) publishUIEvent(subType events.UIEventSubType, data interface{})
 
 // Cleanup は終了時の後処理を行う
 func (e *Editor) Cleanup() {
-	if e.term != nil {
-		e.term.disableRawMode()
-	}
-	os.Stdout.WriteString(e.ui.clearScreen())
-	os.Stdout.WriteString(e.ui.moveCursorToHome())
+	e.cleanupOnce.Do(func() {
+		// 端末の状態を復元
+		if e.termState != nil {
+			e.termState.disableRawMode()
+			e.termState = nil
+		}
+
+		// クリーンアップ処理の完了を通知
+		close(e.cleanupChan)
+
+		// その他のクリーンアップ処理
+		os.Stdout.WriteString(e.ui.clearScreen())
+		os.Stdout.WriteString(e.ui.moveCursorToHome())
+	})
 }
 
 // RefreshScreen は画面を更新する
@@ -365,10 +407,8 @@ func (e *Editor) QuitChan() <-chan struct{} {
 
 // Quit はエディタを終了する
 func (e *Editor) Quit() {
-	if !e.isQuitting {
-		e.isQuitting = true
-		close(e.quit)
-	}
+	e.Cleanup()
+	os.Exit(0)
 }
 
 // OpenFile は指定されたファイルを読み込む
@@ -505,6 +545,27 @@ func (e *Editor) monitorErrors() {
 			}
 		case <-e.quit:
 			return
+		}
+	}
+}
+
+// Run はエディタのメインループを実行する
+func (e *Editor) Run() error {
+	defer e.Cleanup()
+
+	// 初期表示
+	if err := e.RefreshScreen(); err != nil {
+		return err
+	}
+
+	for {
+		select {
+		case <-e.quit:
+			return nil
+		default:
+			if err := e.ProcessKeypress(); err != nil {
+				return err
+			}
 		}
 	}
 }

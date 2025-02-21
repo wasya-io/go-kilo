@@ -11,8 +11,21 @@ type terminalState struct {
 	origTermios *unix.Termios
 }
 
+var globalTermState *terminalState
+
 // InitTerminal は端末の初期化を行う
 func InitTerminal() error {
+	// パニックハンドラを設定
+	defer func() {
+		if r := recover(); r != nil {
+			// パニック時に必ず端末状態を復元
+			if globalTermState != nil {
+				globalTermState.disableRawMode()
+			}
+			panic(r) // 元のパニックを再スロー
+		}
+	}()
+
 	// 現在の端末設定を取得
 	term, err := unix.IoctlGetTermios(int(os.Stdin.Fd()), unix.TCGETS)
 	if err != nil {
@@ -54,6 +67,9 @@ func enableRawMode() (*terminalState, error) {
 	}
 	term.origTermios = termios
 
+	// グローバル状態を設定
+	globalTermState = term
+
 	// 端末の初期化
 	if err := InitTerminal(); err != nil {
 		return nil, err
@@ -68,7 +84,12 @@ func (term *terminalState) disableRawMode() error {
 	os.Stdout.WriteString("\x1b[?1000l\x1b[?1002l\x1b[?1015l\x1b[?1006l")
 
 	if term.origTermios != nil {
-		return unix.IoctlSetTermios(int(os.Stdin.Fd()), unix.TCSETS, term.origTermios)
+		if err := unix.IoctlSetTermios(int(os.Stdin.Fd()), unix.TCSETS, term.origTermios); err != nil {
+			return err
+		}
+		// 状態をクリア
+		globalTermState = nil
+		term.origTermios = nil
 	}
 	return nil
 }
