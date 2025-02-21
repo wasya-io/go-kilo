@@ -45,11 +45,6 @@ func (b *Buffer) LoadContent(lines []string) {
 	b.publishBufferEvent(events.BufferLoadContent, b.cursor, lines, prevState)
 }
 
-// GetContent はバッファの指定行の内容を取得する（後方互換性のために維持）
-func (b *Buffer) GetContent(lineNum int) string {
-	return b.GetContentLine(lineNum)
-}
-
 // GetContentLine は指定行の内容を取得する
 func (b *Buffer) GetContentLine(lineNum int) string {
 	if lineNum >= 0 && lineNum < len(b.content) {

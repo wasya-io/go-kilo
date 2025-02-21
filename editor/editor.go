@@ -87,6 +87,7 @@ func New(testMode bool) (*Editor, error) {
 		e.termState = term
 
 		// パニックリカバリーとクリーンアップの設定
+		// TODO: main.goと似たようなことを行なっている->ここでもリカバリや終了シグナル待ちを行なっているのでgoroutineリークしているのでは？
 		go func() {
 			defer func() {
 				if r := recover(); r != nil {
@@ -508,7 +509,7 @@ func (e *Editor) GetCursor() Cursor {
 }
 
 func (e *Editor) GetContent(lineNum int) string {
-	return e.buffer.GetContent(lineNum)
+	return e.buffer.GetContentLine(lineNum)
 }
 
 func (e *Editor) InsertChars(chars []rune) {
