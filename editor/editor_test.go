@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/wasya-io/go-kilo/editor"
+	"github.com/wasya-io/go-kilo/editor/events"
 )
 
 // テスト用のファイルを準備する
@@ -21,14 +22,22 @@ func setupTestFile(t *testing.T, content string) (string, func()) {
 	return filename, cleanup
 }
 
-// TestEditor はエディタの基本機能をテストする
-func TestEditor(t *testing.T) {
-	ed, err := editor.New(true)
+func setupTestEditor(t *testing.T) *editor.Editor {
+	t.Helper()
+	eventManager := events.NewEventManager()
+	buffer := editor.NewBuffer(eventManager)
+	fileManager := editor.NewFileManager(buffer, eventManager)
+	ed, err := editor.New(true, eventManager, buffer, fileManager)
 	if err != nil {
 		t.Fatalf("エディタの初期化に失敗しました: %v", err)
 	}
 	defer ed.Cleanup()
+	return ed
+}
 
+// TestEditor はエディタの基本機能をテストする
+func TestEditor(t *testing.T) {
+	ed := setupTestEditor(t)
 	filename, cleanup := setupTestFile(t, "first\nsecond")
 	defer cleanup()
 
@@ -64,11 +73,7 @@ func TestEditor(t *testing.T) {
 
 // TestCursorMovement はカーソル移動をテストする
 func TestCursorMovement(t *testing.T) {
-	ed, err := editor.New(true)
-	if err != nil {
-		t.Fatalf("エディタの初期化に失敗しました: %v", err)
-	}
-	defer ed.Cleanup()
+	ed := setupTestEditor(t)
 
 	filename, cleanup := setupTestFile(t, "first\nsecond")
 	defer cleanup()
@@ -140,11 +145,7 @@ func TestCursorMovement(t *testing.T) {
 
 // TestCursorMovementWithMultibyte はマルチバイト文字を含む行間のカーソル移動をテストする
 func TestCursorMovementWithMultibyte(t *testing.T) {
-	ed, err := editor.New(true)
-	if err != nil {
-		t.Fatalf("エディタの初期化に失敗しました: %v", err)
-	}
-	defer ed.Cleanup()
+	ed := setupTestEditor(t)
 
 	// 1行目：ASCII文字のみ（5文字）
 	// 2行目：全角文字（3文字）
@@ -280,11 +281,7 @@ func TestCursorMovementWithMultibyte(t *testing.T) {
 
 // TestInput は文字入力をテストする
 func TestInput(t *testing.T) {
-	ed, err := editor.New(true)
-	if err != nil {
-		t.Fatalf("エディタの初期化に失敗しました: %v", err)
-	}
-	defer ed.Cleanup()
+	ed := setupTestEditor(t)
 
 	filename, cleanup := setupTestFile(t, "")
 	defer cleanup()
@@ -338,11 +335,7 @@ func TestInput(t *testing.T) {
 
 // TestDelete はバックスペースをテストする
 func TestDelete(t *testing.T) {
-	ed, err := editor.New(true)
-	if err != nil {
-		t.Fatalf("エディタの初期化に失敗しました: %v", err)
-	}
-	defer ed.Cleanup()
+	ed := setupTestEditor(t)
 
 	filename, cleanup := setupTestFile(t, "abc")
 	defer cleanup()
@@ -382,10 +375,9 @@ func TestEditorKeyInput(t *testing.T) {
 	}
 
 	// MockKeyReaderを使用してエディタを初期化
-	e, err := editor.New(true) // テストモードで初期化
-	if err != nil {
-		t.Fatalf("Failed to create editor: %v", err)
-	}
+	e := setupTestEditor(t)
+
+	// TODO: mockReaderを注入すればSetKeyReaderが不要になる
 	mockReader := editor.NewMockKeyReader(events)
 	e.SetKeyReader(mockReader)
 
@@ -420,11 +412,7 @@ func TestEditorKeyInput(t *testing.T) {
 
 // TestGetCharAtCursor はカーソル位置の文字を取得する機能をテストする
 func TestGetCharAtCursor(t *testing.T) {
-	ed, err := editor.New(true)
-	if err != nil {
-		t.Fatalf("エディタの初期化に失敗しました: %v", err)
-	}
-	defer ed.Cleanup()
+	ed := setupTestEditor(t)
 
 	filename, cleanup := setupTestFile(t, "abc\nあいう")
 	defer cleanup()
@@ -497,11 +485,7 @@ func TestGetCharAtCursor(t *testing.T) {
 
 // TestEscapeSequence はESCキーとエスケープシーケンスの処理をテストする
 func TestEscapeSequence(t *testing.T) {
-	ed, err := editor.New(true)
-	if err != nil {
-		t.Fatalf("エディタの初期化に失敗しました: %v", err)
-	}
-	defer ed.Cleanup()
+	ed := setupTestEditor(t)
 
 	tests := []struct {
 		name     string
@@ -560,11 +544,7 @@ func TestTabHandling(t *testing.T) {
 	// Create a temporary .env file with custom TAB_WIDTH
 	os.Setenv("TAB_WIDTH", "4")
 
-	ed, err := editor.New(true)
-	if err != nil {
-		t.Fatalf("エディタの初期化に失敗しました: %v", err)
-	}
-	defer ed.Cleanup()
+	ed := setupTestEditor(t)
 
 	filename, cleanup := setupTestFile(t, "")
 	defer cleanup()
@@ -652,11 +632,7 @@ func TestShiftTabHandling(t *testing.T) {
 			os.Setenv("TAB_WIDTH", tt.tabWidth)
 			defer os.Unsetenv("TAB_WIDTH")
 
-			ed, err := editor.New(true)
-			if err != nil {
-				t.Fatalf("エディタの初期化に失敗しました: %v", err)
-			}
-			defer ed.Cleanup()
+			ed := setupTestEditor(t)
 
 			// Set initial content and cursor position
 			filename, cleanup := setupTestFile(t, tt.content)

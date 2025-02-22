@@ -60,26 +60,70 @@ const (
 	MouseMiddleClick // 追加：中クリック
 )
 
+// InputParser は入力解析の責務を担うインターフェース
+type InputParser interface {
+	parseControlKey(byte) (KeyEvent, bool)
+	parseSpecialKey(byte) (KeyEvent, bool)
+	parseEscapeSequence([]byte, int) (KeyEvent, error)
+	parseCharacter([]byte, int) (KeyEvent, []KeyEvent, error)
+	Parse([]byte, int) (KeyEvent, []KeyEvent, error)
+}
+
+// StandardInputParser は標準的な入力解析を実装する
+type StandardInputParser struct{}
+
+func NewStandardInputParser() *StandardInputParser {
+	return &StandardInputParser{}
+}
+
+// Parse はバイトデータを解析してキーイベントを返す
+func (p *StandardInputParser) Parse(buf []byte, n int) (KeyEvent, []KeyEvent, error) {
+	// コントロールキーの処理
+	if event, ok := p.parseControlKey(buf[0]); ok {
+		return event, nil, nil
+	}
+
+	// 特殊キーの処理
+	if event, ok := p.parseSpecialKey(buf[0]); ok {
+		return event, nil, nil
+	}
+
+	// エスケープシーケンスの処理
+	if buf[0] == '\x1b' {
+		event, err := p.parseEscapeSequence(buf, n)
+		if err == nil {
+			return event, nil, nil
+		}
+	}
+
+	// 文字の処理（UTF-8とASCII）
+	return p.parseCharacter(buf, n)
+}
+
 // StandardKeyReader は標準入力からキーを読み取る実装
 type StandardKeyReader struct {
-	inputBuffer []KeyEvent // 入力バッファ
+	inputBuffer []KeyEvent  // 入力バッファ
+	parser      InputParser // 入力解析器
 }
 
 // NewStandardKeyReader は標準入力からキーを読み取るKeyReaderを作成する
 func NewStandardKeyReader() *StandardKeyReader {
 	return &StandardKeyReader{
 		inputBuffer: make([]KeyEvent, 0),
+		parser:      NewStandardInputParser(),
 	}
 }
 
 // ReadKey は標準入力から1つのキーイベントを読み取る
 func (kr *StandardKeyReader) ReadKey() (KeyEvent, error) {
+	// バッファにイベントがある場合はそれを返す
 	if len(kr.inputBuffer) > 0 {
 		event := kr.inputBuffer[0]
 		kr.inputBuffer = kr.inputBuffer[1:]
 		return event, nil
 	}
 
+	// 標準入力から読み取り
 	buf := make([]byte, 32)
 	n, err := os.Stdin.Read(buf[:])
 	if err != nil {
@@ -89,124 +133,152 @@ func (kr *StandardKeyReader) ReadKey() (KeyEvent, error) {
 		return KeyEvent{}, fmt.Errorf("no input")
 	}
 
-	// 特殊キーの処理
-	if buf[0] == 3 { // Ctrl+C
-		return KeyEvent{Type: KeyEventControl, Key: KeyCtrlC}, nil
-	} else if buf[0] == 17 { // Ctrl+Q
-		return KeyEvent{Type: KeyEventControl, Key: KeyCtrlQ}, nil
-	} else if buf[0] == 19 { // Ctrl-S
-		return KeyEvent{Type: KeyEventControl, Key: KeyCtrlS}, nil
-	} else if buf[0] == 127 { // Backspace
-		return KeyEvent{Type: KeyEventSpecial, Key: KeyBackspace}, nil
-	} else if buf[0] == '\r' { // Enter
-		return KeyEvent{Type: KeyEventSpecial, Key: KeyEnter}, nil
-	} else if buf[0] == '\t' { // Tab
-		return KeyEvent{Type: KeyEventSpecial, Key: KeyTab}, nil
+	event, remainingEvents, err := kr.parser.Parse(buf, n)
+	if err != nil {
+		return KeyEvent{}, err
 	}
 
-	// エスケープシーケンスの処理
-	if buf[0] == '\x1b' {
-		if n == 1 {
-			return KeyEvent{Type: KeyEventSpecial, Key: KeyEsc}, nil
+	// 残りのイベントがある場合はバッファに追加
+	if len(remainingEvents) > 0 {
+		kr.inputBuffer = append(kr.inputBuffer, remainingEvents...)
+	}
+
+	return event, nil
+}
+
+// parseControlKey はコントロールキーの解析を行う
+func (p *StandardInputParser) parseControlKey(b byte) (KeyEvent, bool) {
+	switch b {
+	case 3: // Ctrl+C
+		return KeyEvent{Type: KeyEventControl, Key: KeyCtrlC}, true
+	case 17: // Ctrl+Q
+		return KeyEvent{Type: KeyEventControl, Key: KeyCtrlQ}, true
+	case 19: // Ctrl-S
+		return KeyEvent{Type: KeyEventControl, Key: KeyCtrlS}, true
+	}
+	return KeyEvent{}, false
+}
+
+// parseSpecialKey は特殊キーの解析を行う
+func (p *StandardInputParser) parseSpecialKey(b byte) (KeyEvent, bool) {
+	switch b {
+	case 127: // Backspace
+		return KeyEvent{Type: KeyEventSpecial, Key: KeyBackspace}, true
+	case '\r': // Enter
+		return KeyEvent{Type: KeyEventSpecial, Key: KeyEnter}, true
+	case '\t': // Tab
+		return KeyEvent{Type: KeyEventSpecial, Key: KeyTab}, true
+	}
+	return KeyEvent{}, false
+}
+
+// parseEscapeSequence はエスケープシーケンスの解析を行う
+func (p *StandardInputParser) parseEscapeSequence(buf []byte, n int) (KeyEvent, error) {
+	if n == 1 {
+		return KeyEvent{Type: KeyEventSpecial, Key: KeyEsc}, nil
+	}
+
+	if n >= 3 && buf[1] == '[' {
+		switch buf[2] {
+		case 'A':
+			return KeyEvent{Type: KeyEventSpecial, Key: KeyArrowUp}, nil
+		case 'B':
+			return KeyEvent{Type: KeyEventSpecial, Key: KeyArrowDown}, nil
+		case 'C':
+			return KeyEvent{Type: KeyEventSpecial, Key: KeyArrowRight}, nil
+		case 'D':
+			return KeyEvent{Type: KeyEventSpecial, Key: KeyArrowLeft}, nil
+		case 'Z':
+			return KeyEvent{Type: KeyEventSpecial, Key: KeyShiftTab}, nil
+		case 'M', '<':
+			return p.parseMouseEvent(buf, n)
 		}
-		if n >= 3 && buf[1] == '[' {
-			switch buf[2] {
-			case 'A':
-				return KeyEvent{Type: KeyEventSpecial, Key: KeyArrowUp}, nil
-			case 'B':
-				return KeyEvent{Type: KeyEventSpecial, Key: KeyArrowDown}, nil
-			case 'C':
-				return KeyEvent{Type: KeyEventSpecial, Key: KeyArrowRight}, nil
-			case 'D':
-				return KeyEvent{Type: KeyEventSpecial, Key: KeyArrowLeft}, nil
-			case 'Z':
-				return KeyEvent{Type: KeyEventSpecial, Key: KeyShiftTab}, nil
-			case 'M', '<':
-				// マウスイベントの処理
-				if n >= 6 && buf[2] == '<' {
-					// SGR形式のマウスイベント
-					var cb, cx, cy int
-					if _, err := fmt.Sscanf(string(buf[3:n]), "%d;%d;%d", &cb, &cx, &cy); err == nil {
-						switch cb {
-						case 64: // スクロールアップ
-							return KeyEvent{
-								Type:        KeyEventMouse,
-								Key:         KeyMouseWheel,
-								MouseRow:    cy - 1,
-								MouseCol:    cx - 1,
-								MouseAction: MouseScrollUp,
-							}, nil
-						case 65: // スクロールダウン
-							return KeyEvent{
-								Type:        KeyEventMouse,
-								Key:         KeyMouseWheel,
-								MouseRow:    cy - 1,
-								MouseCol:    cx - 1,
-								MouseAction: MouseScrollDown,
-							}, nil
-						case 0: // 左クリック
-							return KeyEvent{
-								Type:        KeyEventMouse,
-								Key:         KeyMouseClick,
-								MouseRow:    cy - 1,
-								MouseCol:    cx - 1,
-								MouseAction: MouseLeftClick,
-							}, nil
-						case 2: // 右クリック
-							return KeyEvent{
-								Type:        KeyEventMouse,
-								Key:         KeyMouseClick,
-								MouseRow:    cy - 1,
-								MouseCol:    cx - 1,
-								MouseAction: MouseRightClick,
-							}, nil
-						case 1: // 中クリック
-							return KeyEvent{
-								Type:        KeyEventMouse,
-								Key:         KeyMouseClick,
-								MouseRow:    cy - 1,
-								MouseCol:    cx - 1,
-								MouseAction: MouseMiddleClick,
-							}, nil
-						}
-					}
-				}
-				// 不明なマウスイベントは無視
-				return KeyEvent{}, fmt.Errorf("unknown mouse event")
+	}
+
+	return KeyEvent{}, fmt.Errorf("unknown escape sequence")
+}
+
+// parseMouseEvent はマウスイベントの解析を行う
+func (p *StandardInputParser) parseMouseEvent(buf []byte, n int) (KeyEvent, error) {
+	if n >= 6 && buf[2] == '<' {
+		var cb, cx, cy int
+		if _, err := fmt.Sscanf(string(buf[3:n]), "%d;%d;%d", &cb, &cx, &cy); err == nil {
+			switch cb {
+			case 64: // スクロールアップ
+				return KeyEvent{
+					Type:        KeyEventMouse,
+					Key:         KeyMouseWheel,
+					MouseRow:    cy - 1,
+					MouseCol:    cx - 1,
+					MouseAction: MouseScrollUp,
+				}, nil
+			case 65: // スクロールダウン
+				return KeyEvent{
+					Type:        KeyEventMouse,
+					Key:         KeyMouseWheel,
+					MouseRow:    cy - 1,
+					MouseCol:    cx - 1,
+					MouseAction: MouseScrollDown,
+				}, nil
+			case 0: // 左クリック
+				return KeyEvent{
+					Type:        KeyEventMouse,
+					Key:         KeyMouseClick,
+					MouseRow:    cy - 1,
+					MouseCol:    cx - 1,
+					MouseAction: MouseLeftClick,
+				}, nil
+			case 2: // 右クリック
+				return KeyEvent{
+					Type:        KeyEventMouse,
+					Key:         KeyMouseClick,
+					MouseRow:    cy - 1,
+					MouseCol:    cx - 1,
+					MouseAction: MouseRightClick,
+				}, nil
+			case 1: // 中クリック
+				return KeyEvent{
+					Type:        KeyEventMouse,
+					Key:         KeyMouseClick,
+					MouseRow:    cy - 1,
+					MouseCol:    cx - 1,
+					MouseAction: MouseMiddleClick,
+				}, nil
 			}
 		}
-		return KeyEvent{}, fmt.Errorf("unknown escape sequence")
 	}
+	return KeyEvent{}, fmt.Errorf("unknown mouse event")
+}
 
+// parseCharacter はUTF-8/ASCII文字の解析を行う
+func (p *StandardInputParser) parseCharacter(buf []byte, n int) (KeyEvent, []KeyEvent, error) {
 	// UTF-8文字の処理
 	if (buf[0] & 0x80) != 0 {
-		// マルチバイト文字の処理
 		r, size := utf8.DecodeRune(buf[:n])
 		if r != utf8.RuneError {
-			// 残りのバイトがある場合は入力バッファに保存
+			var remainingEvents []KeyEvent
 			if n > size {
 				remainingBytes := make([]byte, n-size)
 				copy(remainingBytes, buf[size:n])
-				// 残りのバイトを処理して入力バッファに追加
 				for len(remainingBytes) > 0 {
 					r, s := utf8.DecodeRune(remainingBytes)
 					if r == utf8.RuneError {
 						break
 					}
-					kr.inputBuffer = append(kr.inputBuffer, KeyEvent{Type: KeyEventChar, Rune: r})
+					remainingEvents = append(remainingEvents, KeyEvent{Type: KeyEventChar, Rune: r})
 					remainingBytes = remainingBytes[s:]
 				}
 			}
-			return KeyEvent{Type: KeyEventChar, Rune: r}, nil
+			return KeyEvent{Type: KeyEventChar, Rune: r}, remainingEvents, nil
 		}
 	}
 
 	// ASCII文字の処理
 	if buf[0] >= 32 && buf[0] < 127 {
-		return KeyEvent{Type: KeyEventChar, Rune: rune(buf[0])}, nil
+		return KeyEvent{Type: KeyEventChar, Rune: rune(buf[0])}, nil, nil
 	}
 
-	return KeyEvent{}, fmt.Errorf("unknown input")
+	return KeyEvent{}, nil, fmt.Errorf("unknown input")
 }
 
 // InputHandler は入力処理を管理する構造体
@@ -214,15 +286,17 @@ type InputHandler struct {
 	editor           EditorOperations
 	eventManager     *events.EventManager
 	keyReader        KeyReader
+	parser           InputParser
 	quitWarningShown bool // Ctrl+C/Qで終了警告が表示されているかを追跡
 }
 
 // NewInputHandler は新しいInputHandlerインスタンスを作成する
-func NewInputHandler(editor EditorOperations, eventManager *events.EventManager) *InputHandler {
+func NewInputHandler(editor EditorOperations, eventManager *events.EventManager, keyReader KeyReader, parser InputParser) *InputHandler {
 	handler := &InputHandler{
 		editor:           editor,
 		eventManager:     eventManager,
-		keyReader:        NewStandardKeyReader(),
+		keyReader:        keyReader,
+		parser:           parser,
 		quitWarningShown: false,
 	}
 
@@ -258,7 +332,6 @@ func (h *InputHandler) HandleKeypress() (Command, error) {
 			Rune:       event.Rune,
 			SpecialKey: events.Key(event.Key),
 		}
-		// イベントを発行するだけで、ハンドラは呼び出さない
 		h.eventManager.Publish(inputEvent)
 	}
 

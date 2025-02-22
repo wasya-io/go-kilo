@@ -33,8 +33,14 @@ type Editor struct {
 	logger       *logger.Logger
 }
 
+type WinSize struct {
+	Rows int
+	Cols int
+}
+
 // New は新しいEditorインスタンスを作成する
-func New(testMode bool) (*Editor, error) {
+func New(testMode bool, eventManager *events.EventManager, buffer *Buffer, fileManager *FileManager) (*Editor, error) {
+	// TODO: 直接生成せずWinsize構造体の抽象に依存するようにする
 	var ws *unix.Winsize
 	var err error
 	if !testMode {
@@ -49,13 +55,12 @@ func New(testMode bool) (*Editor, error) {
 	screenRows := int(ws.Row)
 	screenCols := int(ws.Col)
 
-	eventManager := events.NewEventManager()
 	config := LoadConfig()
 
 	e := &Editor{
 		ui:           NewUI(screenRows, screenCols, eventManager), // eventManagerを追加
 		quit:         make(chan struct{}),
-		buffer:       NewBuffer(eventManager), // eventManagerを引数として渡す
+		buffer:       buffer,
 		rowOffset:    0,
 		colOffset:    0,
 		config:       config,
@@ -63,10 +68,12 @@ func New(testMode bool) (*Editor, error) {
 		isQuitting:   false,
 		cleanupChan:  make(chan struct{}),
 		logger:       logger.New(config.DebugMode),
+		fileManager:  fileManager,
 	}
 
-	e.fileManager = NewFileManager(e.buffer, eventManager)
-	e.input = NewInputHandler(e, eventManager)
+	keyReader := NewStandardKeyReader()
+	inputParser := NewStandardInputParser()
+	e.input = NewInputHandler(e, eventManager, keyReader, inputParser) // TODO: inputHandlerがEditorに依存していて注入できない
 
 	// イベントハンドラの登録
 	e.setupEventHandlers()

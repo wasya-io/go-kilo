@@ -8,6 +8,7 @@ import (
 	"syscall"
 
 	"github.com/wasya-io/go-kilo/editor"
+	"github.com/wasya-io/go-kilo/editor/events"
 )
 
 func main() {
@@ -32,7 +33,11 @@ func main() {
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
 	// エディタの初期化
-	ed, err := editor.New(false)
+	eventManager := events.NewEventManager()
+	buffer := editor.NewBuffer(eventManager)
+	fileManager := editor.NewFileManager(buffer, eventManager)
+
+	ed, err := editor.New(false, eventManager, buffer, fileManager)
 	if err != nil {
 		die(err)
 	}
