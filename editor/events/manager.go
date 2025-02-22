@@ -318,8 +318,9 @@ func (em *EventManager) Publish(event Event) {
 		return
 	}
 
-	// 非バッチモードの場合は更新キューに追加
+	// 非バッチモードの場合は更新キューに追加し、即時に処理
 	em.updateQueue.Add(event)
+	em.ProcessUpdates() // 非バッチモード時は即時に処理
 }
 
 // ProcessUpdates は更新キューを処理する
