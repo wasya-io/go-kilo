@@ -115,35 +115,23 @@ func NewStandardKeyReader() *StandardKeyReader {
 }
 
 // ReadKey は標準入力から1つのキーイベントを読み取る
-func (kr *StandardKeyReader) ReadKey() (KeyEvent, error) {
-	// バッファにイベントがある場合はそれを返す
-	if len(kr.inputBuffer) > 0 {
-		event := kr.inputBuffer[0]
-		kr.inputBuffer = kr.inputBuffer[1:]
-		return event, nil
-	}
-
+func (kr *StandardKeyReader) ReadKey() (KeyEvent, []KeyEvent, error) {
 	// 標準入力から読み取り
 	buf := make([]byte, 32)
 	n, err := os.Stdin.Read(buf[:])
 	if err != nil {
-		return KeyEvent{}, fmt.Errorf("input error: %v", err)
+		return KeyEvent{}, nil, fmt.Errorf("input error: %v", err)
 	}
 	if n == 0 {
-		return KeyEvent{}, fmt.Errorf("no input")
+		return KeyEvent{}, nil, fmt.Errorf("no input")
 	}
 
 	event, remainingEvents, err := kr.parser.Parse(buf, n)
 	if err != nil {
-		return KeyEvent{}, err
+		return KeyEvent{}, nil, err
 	}
 
-	// 残りのイベントがある場合はバッファに追加
-	if len(remainingEvents) > 0 {
-		kr.inputBuffer = append(kr.inputBuffer, remainingEvents...)
-	}
-
-	return event, nil
+	return event, remainingEvents, nil
 }
 
 // parseControlKey はコントロールキーの解析を行う
@@ -309,116 +297,22 @@ func (h *InputHandler) SetKeyReader(reader KeyReader) {
 }
 
 // HandleKeypress はキー入力を処理する
-func (h *InputHandler) HandleKeypress() (Command, error) {
+func (h *InputHandler) HandleKeypress() (KeyEvent, []KeyEvent, error) {
 	// TODO: KeyPressの流れと責務を整理する
 	// ReadKey... Stdinから読み取り、入力をパース、バッファ操作(追加と読み出し)
 	// ReadKeyはキー入力をイベントにパース、イベント配列を返すだけにしたい
-	// イベント配列はInputHandlerで保持・・・？
-	// HandleKeypressでコマンドの生成まで行なっているのがNGかも -> 一連の処理を呼び出し元のEditor.PressKeyPressに移管できる？
 	// 整理後・・・
 	// HandleKeypressではキー入力をイベントにパース、イベント配列を返す
 	// 入力バッファはEditorで保持する
 	// 先頭イベントからcreateCommandする
 	// RefreshScreen、command.Executeは今の流れどおり
-	event, err := h.keyReader.ReadKey()
+	event, remainingEvents, err := h.keyReader.ReadKey()
 	if err != nil {
 		if err.Error() == "no input" {
-			return nil, nil
+			return KeyEvent{}, nil, nil
 		}
-		return nil, err
+		return KeyEvent{}, nil, err
 	}
 
-	// コマンドを作成
-	command, err := h.createCommand(event)
-	if err != nil {
-		return nil, err
-	}
-
-	// イベントマネージャーを通して通知（コマンドが生成された場合のみ）
-	// TODO: inputマネージャ内でpublishするのをやめる->呼び出し元のeditorで行う
-	if h.eventManager != nil && command != nil {
-		inputEvent := &events.InputEvent{
-			BaseEvent:  events.BaseEvent{Type: events.InputEventType},
-			KeyType:    events.KeyEventType(event.Type),
-			Rune:       event.Rune,
-			SpecialKey: events.Key(event.Key),
-		}
-		h.eventManager.Publish(inputEvent)
-	}
-
-	return command, nil
-}
-
-// createCommand はキーイベントからコマンドを作成する
-func (h *InputHandler) createCommand(event KeyEvent) (Command, error) {
-	switch event.Type {
-	case KeyEventChar, KeyEventSpecial:
-		// 警告状態をクリア
-		if h.quitWarningShown {
-			h.quitWarningShown = false
-			h.editor.SetStatusMessage("")
-		}
-		if event.Type == KeyEventChar {
-			return NewInsertCharCommand(h.editor, event.Rune), nil
-		}
-		return h.createSpecialKeyCommand(event.Key), nil
-	case KeyEventControl:
-		return h.createControlKeyCommand(event.Key), nil
-	case KeyEventMouse:
-		if event.Key == KeyMouseWheel {
-			// マウスホイールイベントは専用のカーソル移動コマンドを使用
-			switch event.MouseAction {
-			case MouseScrollUp:
-				return NewMoveCursorCommand(h.editor, MouseWheelUp), nil
-			case MouseScrollDown:
-				return NewMoveCursorCommand(h.editor, MouseWheelDown), nil
-			}
-		} else if event.Key == KeyMouseClick {
-			// マウスクリックイベントは現時点では無視
-			// 必要に応じて適切なコマンドを実装できます
-			return nil, nil
-		}
-	}
-	return nil, nil
-}
-
-// createSpecialKeyCommand は特殊キーに対応するコマンドを作成する
-func (h *InputHandler) createSpecialKeyCommand(key Key) Command {
-	switch key {
-	case KeyArrowLeft:
-		return NewMoveCursorCommand(h.editor, CursorLeft)
-	case KeyArrowRight:
-		return NewMoveCursorCommand(h.editor, CursorRight)
-	case KeyArrowUp:
-		return NewMoveCursorCommand(h.editor, CursorUp)
-	case KeyArrowDown:
-		return NewMoveCursorCommand(h.editor, CursorDown)
-	case KeyBackspace:
-		return NewDeleteCharCommand(h.editor)
-	case KeyEnter:
-		return NewInsertNewlineCommand(h.editor)
-	case KeyTab:
-		return NewInsertTabCommand(h.editor)
-	case KeyShiftTab:
-		return NewUndentCommand(h.editor)
-	default:
-		return nil
-	}
-}
-
-// createControlKeyCommand はコントロールキーに対応するコマンドを作成する
-func (h *InputHandler) createControlKeyCommand(key Key) Command {
-	switch key {
-	case KeyCtrlS:
-		return NewSaveCommand(h.editor)
-	case KeyCtrlQ, KeyCtrlC:
-		if h.editor.IsDirty() && !h.quitWarningShown {
-			h.quitWarningShown = true
-			h.editor.SetStatusMessage("Warning! File has unsaved changes. Press Ctrl-Q or Ctrl-C again to quit.")
-			return nil
-		}
-		return NewQuitCommand(h.editor)
-	default:
-		return nil
-	}
+	return event, remainingEvents, nil
 }

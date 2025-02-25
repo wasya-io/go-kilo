@@ -7,7 +7,7 @@ import (
 
 // KeyReader はキー入力を読み取るインターフェース
 type KeyReader interface {
-	ReadKey() (KeyEvent, error)
+	ReadKey() (KeyEvent, []KeyEvent, error)
 }
 
 // CursorMovement はカーソル移動の種類を表す型
@@ -212,13 +212,13 @@ func NewMockKeyReader(events []KeyEvent) *MockKeyReader {
 }
 
 // ReadKey は事前に設定されたキーイベントを順番に返す
-func (m *MockKeyReader) ReadKey() (KeyEvent, error) {
+func (m *MockKeyReader) ReadKey() (KeyEvent, []KeyEvent, error) {
 	if m.index >= len(m.events) {
-		return KeyEvent{}, nil
+		return KeyEvent{}, nil, nil
 	}
 	event := m.events[m.index]
 	m.index++
-	return event, nil
+	return event, nil, nil
 }
 
 // ResetIndex はイベントインデックスをリセットする

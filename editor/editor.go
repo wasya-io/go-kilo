@@ -16,21 +16,23 @@ import (
 
 // Editor はエディタの状態を管理する構造体
 type Editor struct {
-	term         *terminalState
-	ui           *UI
-	quit         chan struct{}
-	isQuitting   bool
-	buffer       *Buffer
-	rowOffset    int
-	colOffset    int
-	fileManager  *FileManager
-	input        *InputHandler
-	config       *Config
-	eventManager *events.EventManager // 追加: イベントマネージャー
-	termState    *terminalState
-	cleanupOnce  sync.Once
-	cleanupChan  chan struct{}
-	logger       *logger.Logger
+	term             *terminalState
+	ui               *UI
+	quit             chan struct{}
+	isQuitting       bool
+	quitWarningShown bool
+	buffer           *Buffer
+	eventBuffer      []KeyEvent
+	rowOffset        int
+	colOffset        int
+	fileManager      *FileManager
+	input            *InputHandler
+	config           *Config
+	eventManager     *events.EventManager // 追加: イベントマネージャー
+	termState        *terminalState
+	cleanupOnce      sync.Once
+	cleanupChan      chan struct{}
+	logger           *logger.Logger
 }
 
 type WinSize struct {
@@ -58,17 +60,18 @@ func New(testMode bool, eventManager *events.EventManager, buffer *Buffer, fileM
 	config := LoadConfig()
 
 	e := &Editor{
-		ui:           NewUI(screenRows, screenCols, eventManager), // eventManagerを追加
-		quit:         make(chan struct{}),
-		buffer:       buffer,
-		rowOffset:    0,
-		colOffset:    0,
-		config:       config,
-		eventManager: eventManager,
-		isQuitting:   false,
-		cleanupChan:  make(chan struct{}),
-		logger:       logger.New(config.DebugMode),
-		fileManager:  fileManager,
+		ui:               NewUI(screenRows, screenCols, eventManager), // eventManagerを追加
+		quit:             make(chan struct{}),
+		buffer:           buffer,
+		rowOffset:        0,
+		colOffset:        0,
+		config:           config,
+		eventManager:     eventManager,
+		isQuitting:       false,
+		quitWarningShown: false,
+		cleanupChan:      make(chan struct{}),
+		logger:           logger.New(config.DebugMode),
+		fileManager:      fileManager,
 	}
 
 	keyReader := NewStandardKeyReader()
@@ -354,9 +357,15 @@ func (e *Editor) RefreshScreen() error {
 
 // ProcessKeypress はキー入力を処理する
 func (e *Editor) ProcessKeypress() error {
-	command, err := e.input.HandleKeypress()
+	event, err := e.readEvent()
 	if err != nil {
-		e.logger.Log("error", fmt.Sprintf("Keypress error: %v", err))
+		e.logger.Log("error", fmt.Sprintf("readEvent error: %v", err))
+		return err
+	}
+
+	// コマンドを作成
+	command, err := e.createCommand(event)
+	if err != nil {
 		return err
 	}
 
@@ -372,6 +381,29 @@ func (e *Editor) ProcessKeypress() error {
 	}
 
 	return nil
+}
+
+// readEvent はイベントを読み取る
+func (e *Editor) readEvent() (KeyEvent, error) {
+
+	// バッファにイベントがある場合はそれを返す
+	if len(e.eventBuffer) > 0 {
+		event := e.eventBuffer[0]
+		e.eventBuffer = e.eventBuffer[1:]
+		return event, nil
+	}
+
+	event, remainingEvents, err := e.input.HandleKeypress()
+	if err != nil {
+		e.logger.Log("error", fmt.Sprintf("Keypress error: %v", err))
+		return KeyEvent{}, err
+	}
+
+	// 残りのイベントがある場合はバッファに追加
+	if len(remainingEvents) > 0 {
+		e.eventBuffer = append(e.eventBuffer, remainingEvents...)
+	}
+	return event, nil
 }
 
 // UpdateScroll はカーソル位置に基づいてスクロール位置を更新する
@@ -455,6 +487,80 @@ func (e *Editor) SaveFile() error {
 	}
 	e.setStatusMessage("File saved")
 	return nil
+}
+
+// createCommand はキーイベントからコマンドを作成する
+func (e *Editor) createCommand(event KeyEvent) (Command, error) {
+	switch event.Type {
+	case KeyEventChar, KeyEventSpecial:
+		// 警告状態をクリア
+		if e.quitWarningShown {
+			e.quitWarningShown = false
+			e.SetStatusMessage("")
+		}
+		if event.Type == KeyEventChar {
+			return NewInsertCharCommand(e, event.Rune), nil
+		}
+		return e.createSpecialKeyCommand(event.Key), nil
+	case KeyEventControl:
+		return e.createControlKeyCommand(event.Key), nil
+	case KeyEventMouse:
+		if event.Key == KeyMouseWheel {
+			// マウスホイールイベントは専用のカーソル移動コマンドを使用
+			switch event.MouseAction {
+			case MouseScrollUp:
+				return NewMoveCursorCommand(e, MouseWheelUp), nil
+			case MouseScrollDown:
+				return NewMoveCursorCommand(e, MouseWheelDown), nil
+			}
+		} else if event.Key == KeyMouseClick {
+			// マウスクリックイベントは現時点では無視
+			// 必要に応じて適切なコマンドを実装できます
+			return nil, nil
+		}
+	}
+	return nil, nil
+}
+
+// createSpecialKeyCommand は特殊キーに対応するコマンドを作成する
+func (e *Editor) createSpecialKeyCommand(key Key) Command {
+	switch key {
+	case KeyArrowLeft:
+		return NewMoveCursorCommand(e, CursorLeft)
+	case KeyArrowRight:
+		return NewMoveCursorCommand(e, CursorRight)
+	case KeyArrowUp:
+		return NewMoveCursorCommand(e, CursorUp)
+	case KeyArrowDown:
+		return NewMoveCursorCommand(e, CursorDown)
+	case KeyBackspace:
+		return NewDeleteCharCommand(e)
+	case KeyEnter:
+		return NewInsertNewlineCommand(e)
+	case KeyTab:
+		return NewInsertTabCommand(e)
+	case KeyShiftTab:
+		return NewUndentCommand(e)
+	default:
+		return nil
+	}
+}
+
+// createControlKeyCommand はコントロールキーに対応するコマンドを作成する
+func (e *Editor) createControlKeyCommand(key Key) Command {
+	switch key {
+	case KeyCtrlS:
+		return NewSaveCommand(e)
+	case KeyCtrlQ, KeyCtrlC:
+		if e.IsDirty() && !e.quitWarningShown {
+			e.quitWarningShown = true
+			e.SetStatusMessage("Warning! File has unsaved changes. Press Ctrl-Q or Ctrl-C again to quit.")
+			return nil
+		}
+		return NewQuitCommand(e)
+	default:
+		return nil
+	}
 }
 
 // setStatusMessage はステータスメッセージを設定する（非公開メソッド）
