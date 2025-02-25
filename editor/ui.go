@@ -69,14 +69,13 @@ type UI struct {
 	lineState      LineUpdateState
 	buffer         strings.Builder // 追加：バッファ
 	debugMessage   string          // デバッグメッセージ用
+	cursor         Cursor          // カーソル位置の管理（buffer.goで定義されたCursor型を使用）
+	lastCursorPos  Cursor          // 前回のカーソル位置を保存
 }
 
-// Position はカーソル位置を表す
-type Position struct {
+type Offset struct {
 	Row, Col int
 }
-
-type Offset Position
 
 // NewUI は新しいUIインスタンスを作成する
 func NewUI(rows, cols int, eventManager *events.EventManager) *UI {
@@ -98,16 +97,35 @@ func NewUI(rows, cols int, eventManager *events.EventManager) *UI {
 			dirty:    make(map[int]bool),
 			forceAll: true, // 初期表示時に全行を更新対象とする
 		},
-		message:      "",
-		messageArgs:  make([]interface{}, 0),
-		messageTime:  0,
-		debugMessage: "",
+		message:       "",
+		messageArgs:   make([]interface{}, 0),
+		messageTime:   0,
+		debugMessage:  "",
+		cursor:        Cursor{X: 0, Y: 0},
+		lastCursorPos: Cursor{X: 0, Y: 0},
 	}
 
 	// バッファイベントを購読してUI更新を最適化
 	eventManager.Subscribe(events.BufferEventType, ui.handleBufferEvent)
 
 	return ui
+}
+
+// syncCursorWithBuffer はUIのカーソル位置をBufferに同期します
+func (ui *UI) syncCursorWithBuffer(buffer *Buffer) {
+	if buffer == nil {
+		return
+	}
+	buffer.SetCursor(ui.cursor.X, ui.cursor.Y)
+}
+
+// updateCursorFromBuffer はBufferのカーソル位置をUIに同期します
+func (ui *UI) updateCursorFromBuffer(buffer *Buffer) {
+	if buffer == nil {
+		return
+	}
+	cursorPos := buffer.GetCursor()
+	ui.SetCursor(cursorPos.X, cursorPos.Y)
 }
 
 // handleBufferEvent はバッファイベントを処理する
@@ -126,11 +144,9 @@ func (ui *UI) handleBufferEvent(event events.Event) {
 			}
 		case events.BufferCursorMoved:
 			if pos, ok := bufferEvent.Data.(events.Position); ok {
+				// カーソル位置の変更を反映
+				ui.SetCursor(pos.X, pos.Y)
 				ui.QueueUpdate(AreaCursor, HighPriority, pos)
-				// カーソル移動時も全行を更新対象とする
-				ui.QueueUpdate(AreaLine, MediumPriority, events.EditorUpdateData{
-					ForceAll: true,
-				})
 			}
 		case events.BufferStructuralChange:
 			ui.QueueUpdate(AreaFull, MediumPriority, nil)
@@ -355,9 +371,9 @@ func (ui *UI) clearLine() string {
 }
 
 // getScreenPosition はバッファ上の位置から画面上の位置を計算する
-func (ui *UI) getScreenPosition(cursor Position, buffer *Buffer, rowOffset, colOffset int) (int, int) {
+func (ui *UI) getScreenPosition(cursor events.Position, buffer *Buffer, rowOffset, colOffset int) (int, int) {
 	// 行番号の調整：エディタ領域内に収める
-	screenY := cursor.Row - rowOffset
+	screenY := cursor.Y - rowOffset
 	if screenY < 0 {
 		screenY = 0
 	} else if screenY >= ui.screenRows-2 { // ステータスバーとメッセージバーの2行分を考慮
@@ -365,11 +381,11 @@ func (ui *UI) getScreenPosition(cursor Position, buffer *Buffer, rowOffset, colO
 	}
 
 	// 列位置の調整（文字の表示幅を考慮）
-	row := buffer.getRow(cursor.Row)
+	row := buffer.getRow(cursor.Y)
 	var screenX int
 	if row != nil {
 		// カーソル位置までの表示幅を計算
-		screenX = row.OffsetToScreenPosition(cursor.Col) - colOffset
+		screenX = row.OffsetToScreenPosition(cursor.X) - colOffset
 		if screenX < 0 {
 			screenX = 0
 		} else if screenX >= ui.screenCols {
@@ -457,7 +473,7 @@ func (ui *UI) RefreshScreen(buffer *Buffer, filename string, rowOffset, colOffse
 
 	// カーソル位置の設定（画面バッファに追加）
 	cursor := buffer.GetCursor()
-	screenX, screenY := ui.getScreenPosition(Position{Row: cursor.Y, Col: cursor.X}, buffer, rowOffset, colOffset)
+	screenX, screenY := ui.getScreenPosition(events.Position{Y: cursor.Y, X: cursor.X}, buffer, rowOffset, colOffset)
 	ui.buffer.WriteString(ui.moveCursor(screenY, screenX))
 
 	// バッファの内容を一括で画面に反映
@@ -681,4 +697,103 @@ func (ui *UI) clearUpdateState() {
 // SetDebugMessage はデバッグ用のメッセージを設定する
 func (ui *UI) SetDebugMessage(msg string) {
 	ui.debugMessage = msg
+}
+
+// GetCursor はカーソル位置を返す
+func (ui *UI) GetCursor() Cursor {
+	return ui.cursor
+}
+
+// SetCursor はカーソル位置を設定する
+func (ui *UI) SetCursor(x, y int) {
+	ui.lastCursorPos = ui.cursor
+	ui.cursor = Cursor{X: x, Y: y}
+
+	// カーソル位置が変更された場合のみイベントを発行
+	if ui.lastCursorPos != ui.cursor {
+		ui.publishCursorUpdateEvent(ui.cursor.toPosition())
+	}
+}
+
+// MoveCursor は指定された方向にカーソルを移動する
+func (ui *UI) MoveCursor(movement CursorMovement, buffer *Buffer) {
+	if buffer.GetLineCount() == 0 {
+		return
+	}
+
+	ui.lastCursorPos = ui.cursor
+	currentRow := buffer.getRow(ui.cursor.Y)
+	if currentRow == nil {
+		return
+	}
+
+	switch movement {
+	case CursorUp:
+		if ui.cursor.Y > 0 {
+			currentVisualX := currentRow.OffsetToScreenPosition(ui.cursor.X)
+			ui.cursor.Y--
+			targetRow := buffer.getRow(ui.cursor.Y)
+			if targetRow != nil {
+				ui.cursor.X = targetRow.ScreenPositionToOffset(currentVisualX)
+			}
+		}
+	case MouseWheelUp:
+		targetY := ui.cursor.Y - 3
+		if targetY < 0 {
+			targetY = 0
+		}
+		if ui.cursor.Y > 0 {
+			currentVisualX := currentRow.OffsetToScreenPosition(ui.cursor.X)
+			ui.cursor.Y = targetY
+			targetRow := buffer.getRow(ui.cursor.Y)
+			if targetRow != nil {
+				ui.cursor.X = targetRow.ScreenPositionToOffset(currentVisualX)
+			}
+		}
+	case CursorDown:
+		if ui.cursor.Y < buffer.GetLineCount()-1 {
+			currentVisualX := currentRow.OffsetToScreenPosition(ui.cursor.X)
+			ui.cursor.Y++
+			targetRow := buffer.getRow(ui.cursor.Y)
+			if targetRow != nil {
+				ui.cursor.X = targetRow.ScreenPositionToOffset(currentVisualX)
+			}
+		}
+	case MouseWheelDown:
+		targetY := ui.cursor.Y + 3
+		if targetY >= buffer.GetLineCount() {
+			targetY = buffer.GetLineCount() - 1
+		}
+		if ui.cursor.Y < buffer.GetLineCount()-1 {
+			currentVisualX := currentRow.OffsetToScreenPosition(ui.cursor.X)
+			ui.cursor.Y = targetY
+			targetRow := buffer.getRow(ui.cursor.Y)
+			if targetRow != nil {
+				ui.cursor.X = targetRow.ScreenPositionToOffset(currentVisualX)
+			}
+		}
+	case CursorLeft:
+		if ui.cursor.X > 0 {
+			ui.cursor.X--
+		} else if ui.cursor.Y > 0 {
+			ui.cursor.Y--
+			targetRow := buffer.getRow(ui.cursor.Y)
+			if targetRow != nil {
+				ui.cursor.X = targetRow.GetRuneCount()
+			}
+		}
+	case CursorRight:
+		maxX := currentRow.GetRuneCount()
+		if ui.cursor.X < maxX {
+			ui.cursor.X++
+		} else if ui.cursor.Y < buffer.GetLineCount()-1 {
+			ui.cursor.Y++
+			ui.cursor.X = 0
+		}
+	}
+
+	// カーソル位置が変更された場合のみイベントを発行
+	if ui.lastCursorPos != ui.cursor {
+		ui.publishCursorUpdateEvent(ui.cursor.toPosition())
+	}
 }
