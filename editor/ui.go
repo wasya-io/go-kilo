@@ -55,6 +55,7 @@ type LineUpdateState struct {
 type UI struct {
 	screenRows     int
 	screenCols     int
+	offset         Offset
 	message        string
 	messageArgs    []interface{}
 	messageTime    int64                        // メッセージの表示時間を制御
@@ -75,11 +76,14 @@ type Position struct {
 	Row, Col int
 }
 
+type Offset Position
+
 // NewUI は新しいUIインスタンスを作成する
 func NewUI(rows, cols int, eventManager *events.EventManager) *UI {
 	ui := &UI{
 		screenRows:     rows,
 		screenCols:     cols,
+		offset:         Offset{Row: 0, Col: 0},
 		lastColOffset:  0,
 		eventManager:   eventManager,
 		needsRefresh:   false,
@@ -257,6 +261,21 @@ func (ui *UI) SetScrollSteps(steps int) {
 		steps = 1
 	}
 	ui.scrollState.scrollSteps = steps
+}
+
+// UpdateOffsetRow は行オフセットを更新する
+func (ui *UI) UpdateOffsetRow(row int) {
+	ui.offset.Row = row
+}
+
+// UpdateOffsetCol は列オフセットを更新する
+func (ui *UI) UpdateOffsetCol(col int) {
+	ui.offset.Col = col
+}
+
+// GetOffset は現在のオフセットを返す
+func (ui *UI) GetOffset() Offset {
+	return ui.offset
 }
 
 // abs は整数の絶対値を返す

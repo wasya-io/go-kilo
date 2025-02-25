@@ -23,8 +23,6 @@ type Editor struct {
 	quitWarningShown bool
 	buffer           *Buffer
 	eventBuffer      []KeyEvent
-	rowOffset        int
-	colOffset        int
 	fileManager      *FileManager
 	input            *InputHandler
 	config           *Config
@@ -63,8 +61,6 @@ func New(testMode bool, eventManager *events.EventManager, buffer *Buffer, fileM
 		ui:               NewUI(screenRows, screenCols, eventManager), // eventManagerを追加
 		quit:             make(chan struct{}),
 		buffer:           buffer,
-		rowOffset:        0,
-		colOffset:        0,
 		config:           config,
 		eventManager:     eventManager,
 		isQuitting:       false,
@@ -346,7 +342,8 @@ func (e *Editor) RefreshScreen() error {
 	e.UpdateScroll()
 
 	// UIの更新処理を実行
-	err := e.ui.RefreshScreen(e.buffer, e.fileManager.GetFilename(), e.rowOffset, e.colOffset)
+	offset := e.ui.GetOffset()
+	err := e.ui.RefreshScreen(e.buffer, e.fileManager.GetFilename(), offset.Row, offset.Col)
 	if err != nil {
 		return err
 	}
@@ -409,15 +406,22 @@ func (e *Editor) readEvent() (KeyEvent, error) {
 // UpdateScroll はカーソル位置に基づいてスクロール位置を更新する
 func (e *Editor) UpdateScroll() {
 	// スクロール位置の更新処理
-	if e.buffer.cursor.Y < e.rowOffset {
-		e.rowOffset = e.buffer.cursor.Y
+	offset := e.ui.GetOffset()
+
+	defer func(o *Offset) {
+		e.ui.UpdateOffsetRow(o.Row)
+		e.ui.UpdateOffsetCol(o.Col)
+	}(&offset)
+
+	if e.buffer.cursor.Y < offset.Row {
+		offset.Row = e.buffer.cursor.Y
 	}
 
 	screenBottom := e.ui.screenRows - 2
 	visibleLines := screenBottom - 1
 
-	if e.buffer.cursor.Y >= e.rowOffset+visibleLines {
-		e.rowOffset = e.buffer.cursor.Y - visibleLines + 1
+	if e.buffer.cursor.Y >= (offset.Row + visibleLines) {
+		offset.Row = e.buffer.cursor.Y - visibleLines + 1
 	}
 
 	row := e.buffer.getRow(e.buffer.cursor.Y)
@@ -427,25 +431,25 @@ func (e *Editor) UpdateScroll() {
 
 	cursorScreenPos := row.OffsetToScreenPosition(e.buffer.cursor.X)
 
-	if cursorScreenPos < e.colOffset {
-		e.colOffset = cursorScreenPos
+	if cursorScreenPos < offset.Col {
+		offset.Col = cursorScreenPos
 	}
 
 	rightMargin := (e.ui.screenCols * 4) / 5
-	if cursorScreenPos >= e.colOffset+rightMargin {
-		e.colOffset = cursorScreenPos - rightMargin + 1
+	if cursorScreenPos >= (offset.Col + rightMargin) {
+		offset.Col = cursorScreenPos - rightMargin + 1
 	}
 
-	if e.rowOffset < 0 {
-		e.rowOffset = 0
+	if offset.Row < 0 {
+		offset.Row = 0
 	}
-	if e.colOffset < 0 {
-		e.colOffset = 0
+	if offset.Col < 0 {
+		offset.Col = 0
 	}
 
 	maxRow := max(0, e.buffer.GetLineCount()-1)
-	if e.rowOffset > maxRow {
-		e.rowOffset = maxRow
+	if offset.Row > maxRow {
+		offset.Row = maxRow
 	}
 }
 
