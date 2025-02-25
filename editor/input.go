@@ -310,6 +310,16 @@ func (h *InputHandler) SetKeyReader(reader KeyReader) {
 
 // HandleKeypress はキー入力を処理する
 func (h *InputHandler) HandleKeypress() (Command, error) {
+	// TODO: KeyPressの流れと責務を整理する
+	// ReadKey... Stdinから読み取り、入力をパース、バッファ操作(追加と読み出し)
+	// ReadKeyはキー入力をイベントにパース、イベント配列を返すだけにしたい
+	// イベント配列はInputHandlerで保持・・・？
+	// HandleKeypressでコマンドの生成まで行なっているのがNGかも -> 一連の処理を呼び出し元のEditor.PressKeyPressに移管できる？
+	// 整理後・・・
+	// HandleKeypressではキー入力をイベントにパース、イベント配列を返す
+	// 入力バッファはEditorで保持する
+	// 先頭イベントからcreateCommandする
+	// RefreshScreen、command.Executeは今の流れどおり
 	event, err := h.keyReader.ReadKey()
 	if err != nil {
 		if err.Error() == "no input" {
@@ -325,6 +335,7 @@ func (h *InputHandler) HandleKeypress() (Command, error) {
 	}
 
 	// イベントマネージャーを通して通知（コマンドが生成された場合のみ）
+	// TODO: inputマネージャ内でpublishするのをやめる->呼び出し元のeditorで行う
 	if h.eventManager != nil && command != nil {
 		inputEvent := &events.InputEvent{
 			BaseEvent:  events.BaseEvent{Type: events.InputEventType},

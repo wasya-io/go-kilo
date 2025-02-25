@@ -320,7 +320,8 @@ func (em *EventManager) Publish(event Event) {
 
 	// 非バッチモードの場合は更新キューに追加し、即時に処理
 	em.updateQueue.Add(event)
-	em.ProcessUpdates() // 非バッチモード時は即時に処理
+	// TODO: 非バッチモード時は即時に処理したいが不具合があるので保留。コマンドで行なっている処理をすべて代替する必要がある
+	// em.ProcessUpdates()
 }
 
 // ProcessUpdates は更新キューを処理する
