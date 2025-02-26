@@ -12,8 +12,6 @@ const (
 	BufferDeleteChar BufferOperationType = "delete_char"
 	// BufferNewLine は改行挿入操作
 	BufferNewLine BufferOperationType = "new_line"
-	// BufferMoveCursor はカーソル移動操作
-	BufferMoveCursor BufferOperationType = "move_cursor"
 	// BufferRangeModified は範囲変更操作
 	BufferRangeModified BufferOperationType = "range_modified"
 	// BufferStateChange はバッファの状態変更操作
@@ -36,7 +34,6 @@ type BufferEventSubType int
 
 const (
 	BufferContentChanged BufferEventSubType = iota
-	BufferCursorMoved
 	BufferStructuralChange
 )
 
@@ -50,7 +47,7 @@ type BufferChangeData struct {
 	Operation     BufferOperationType
 }
 
-// Position はバッファ内の位置を表す
+// Position はバッファ内の位置を表す（編集操作の位置を示すために使用）
 type Position struct {
 	X, Y int
 }
@@ -63,10 +60,9 @@ type Range struct {
 
 // BufferState はバッファの状態を表す
 type BufferState struct {
-	Content   string   // 影響を受けた行の内容
-	IsDirty   bool     // 未保存の変更があるか
-	CursorPos Position // カーソル位置
-	Lines     []string // 影響を受けた行の範囲
+	Content string   // 影響を受けた行の内容
+	IsDirty bool     // 未保存の変更があるか
+	Lines   []string // 影響を受けた行の範囲
 }
 
 // BufferEvent はバッファの変更を表すイベント
@@ -117,11 +113,27 @@ func NewBufferChangeEvent(op BufferOperationType, pos Position, data interface{}
 	return event
 }
 
+// SetStates はバッファの状態を設定する
+func (e *BufferEvent) SetStates(prev, curr BufferState) {
+	e.prevState = prev
+	e.currState = curr
+
+	// 状態の変更から影響を受けた行を特定
+	if prev.Content != curr.Content {
+		change := BufferChangeData{
+			ChangeType:   SingleLineEdit,
+			IsStructural: false,
+		}
+		if len(curr.Lines) > 0 {
+			change.AffectedLines = []int{0} // とりあえず最初の行を影響された行とする
+		}
+		e.AddChange(change)
+	}
+}
+
 // determineSubType は操作タイプからサブタイプを決定する
 func determineSubType(op BufferOperationType) BufferEventSubType {
 	switch op {
-	case BufferMoveCursor:
-		return BufferCursorMoved
 	case BufferNewLine, BufferRangeModified:
 		return BufferStructuralChange
 	default:

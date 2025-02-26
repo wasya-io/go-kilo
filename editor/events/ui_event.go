@@ -32,6 +32,11 @@ type EditorUpdateData struct {
 	ForceAll bool
 }
 
+// CursorPosition はUI上のカーソル位置を表す
+type CursorPosition struct {
+	X, Y int
+}
+
 // UIEvent はUI更新イベントを表す
 type UIEvent struct {
 	BaseEvent
@@ -46,4 +51,9 @@ func NewUIEvent(subType UIEventSubType, data interface{}) *UIEvent {
 		SubType:   subType,
 		Data:      data,
 	}
+}
+
+// NewCursorUpdateEvent はカーソル更新イベントを作成する
+func NewCursorUpdateEvent(pos CursorPosition) *UIEvent {
+	return NewUIEvent(UICursorUpdate, pos)
 }

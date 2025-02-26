@@ -242,19 +242,12 @@ func (e *Editor) handleBufferEvent(event *events.BufferEvent) {
 
 	switch event.SubType {
 	case events.BufferContentChanged:
-		if data, ok := event.Data.(string); ok {
-			e.UpdateScroll()
-			// テキスト変更はすべて再描画が必要
-			e.ui.QueueUpdate(AreaFull, MediumPriority, data)
-		}
-	case events.BufferCursorMoved:
-		if data, ok := event.Data.(events.Position); ok {
-			e.UpdateScroll()
-			// カーソル移動時は部分更新のみ
-			e.ui.QueueUpdate(AreaCursor, HighPriority, data)
+		// 内容変更時の処理
+		if event.HasChanges() {
+			e.ui.QueueUpdate(AreaLine, MediumPriority, nil)
 		}
 	case events.BufferStructuralChange:
-		e.UpdateScroll()
+		// 構造的な変更時の処理（改行など）
 		e.ui.QueueUpdate(AreaFull, MediumPriority, nil)
 	}
 
@@ -280,8 +273,10 @@ func (e *Editor) handleUIEvent(event *events.UIEvent) {
 			e.RefreshScreen()
 		}
 	case events.UICursorUpdate:
-		if data, ok := event.Data.(events.Position); ok {
-			e.buffer.SetCursor(data.X, data.Y)
+		if data, ok := event.Data.(events.CursorPosition); ok {
+			// カーソル位置の更新はUI構造体で管理
+			e.ui.SetCursor(data.X, data.Y)
+			e.UpdateScroll()
 			e.RefreshScreen()
 		}
 	}
@@ -407,30 +402,29 @@ func (e *Editor) readEvent() (KeyEvent, error) {
 func (e *Editor) UpdateScroll() {
 	// スクロール位置の更新処理
 	offset := e.ui.GetOffset()
-
 	defer func(o *Offset) {
 		e.ui.UpdateOffsetRow(o.Row)
 		e.ui.UpdateOffsetCol(o.Col)
 	}(&offset)
 
-	if e.buffer.cursor.Y < offset.Row {
-		offset.Row = e.buffer.cursor.Y
-	}
+	// UI経由でカーソル位置を取得
+	cursor := e.ui.GetCursor()
 
+	if cursor.Y < offset.Row {
+		offset.Row = cursor.Y
+	}
 	screenBottom := e.ui.screenRows - 2
 	visibleLines := screenBottom - 1
-
-	if e.buffer.cursor.Y >= (offset.Row + visibleLines) {
-		offset.Row = e.buffer.cursor.Y - visibleLines + 1
+	if cursor.Y >= (offset.Row + visibleLines) {
+		offset.Row = cursor.Y - visibleLines + 1
 	}
 
-	row := e.buffer.getRow(e.buffer.cursor.Y)
+	row := e.buffer.getRow(cursor.Y)
 	if row == nil {
 		return
 	}
 
-	cursorScreenPos := row.OffsetToScreenPosition(e.buffer.cursor.X)
-
+	cursorScreenPos := row.OffsetToScreenPosition(cursor.X)
 	if cursorScreenPos < offset.Col {
 		offset.Col = cursorScreenPos
 	}
@@ -591,25 +585,48 @@ func (e *Editor) GetConfig() *Config {
 
 func (e *Editor) InsertChar(ch rune) {
 	e.logger.Log("edit", fmt.Sprintf("Inserting character: %c", ch))
-	e.buffer.InsertChar(ch)
+	pos := e.ui.GetCursor()
+	e.buffer.InsertChar(events.Position{X: pos.X, Y: pos.Y}, ch)
+	// カーソルを1つ進める
+	e.ui.SetCursor(pos.X+1, pos.Y)
 	e.RefreshScreen()
 }
 
 func (e *Editor) DeleteChar() {
 	e.logger.Log("edit", "Deleting character")
-	e.buffer.DeleteChar()
+	pos := e.ui.GetCursor()
+
+	if pos.X > 0 {
+		// 行の途中での削除
+		e.buffer.DeleteChar(events.Position{X: pos.X, Y: pos.Y})
+		e.ui.SetCursor(pos.X-1, pos.Y) // カーソルを1つ左に移動
+	} else if pos.Y > 0 {
+		// 行頭での削除（前の行との結合）
+		prevRow := e.buffer.getRow(pos.Y - 1)
+		if prevRow != nil {
+			targetX := prevRow.GetRuneCount() // 前の行の末尾位置
+			e.buffer.DeleteChar(events.Position{X: pos.X, Y: pos.Y})
+			e.ui.SetCursor(targetX, pos.Y-1) // 前の行の末尾へ移動
+		}
+	}
+
 	e.RefreshScreen()
 }
 
 func (e *Editor) MoveCursor(movement CursorMovement) {
 	e.logger.Log("cursor", fmt.Sprintf("Moving cursor: %v", movement))
-	e.buffer.MoveCursor(movement)
+	// Buffer直接操作からUI経由に変更
+	e.ui.MoveCursor(movement, e.buffer)
 	e.UpdateScroll()
 }
 
 func (e *Editor) InsertNewline() {
 	e.logger.Log("edit", "Inserting newline")
-	e.buffer.InsertNewline()
+	pos := e.ui.GetCursor()
+	e.buffer.InsertNewline(events.Position{X: pos.X, Y: pos.Y})
+	// UIに改行処理を通知
+	e.ui.HandleNewLine()
+	e.UpdateScroll()
 	e.RefreshScreen()
 }
 
@@ -621,8 +638,9 @@ func (e *Editor) SetDirty(dirty bool) {
 	e.buffer.SetDirty(dirty)
 }
 
+// GetCursor はUI経由でカーソル位置を返す
 func (e *Editor) GetCursor() Cursor {
-	return e.buffer.GetCursor()
+	return e.ui.GetCursor()
 }
 
 func (e *Editor) GetContent(lineNum int) string {
@@ -630,7 +648,10 @@ func (e *Editor) GetContent(lineNum int) string {
 }
 
 func (e *Editor) InsertChars(chars []rune) {
-	e.buffer.InsertChars(chars)
+	pos := e.ui.GetCursor()
+	e.buffer.InsertChars(events.Position{X: pos.X, Y: pos.Y}, chars)
+	// カーソルを入力文字数分進める
+	e.ui.SetCursor(pos.X+len(chars), pos.Y)
 }
 
 // periodicSnapshot は定期的にスナップショットを作成する

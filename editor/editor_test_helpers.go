@@ -3,6 +3,8 @@ package editor
 import (
 	"fmt"
 	"unicode/utf8"
+
+	"github.com/wasya-io/go-kilo/editor/events"
 )
 
 // KeyReader はキー入力を読み取るインターフェース
@@ -30,7 +32,7 @@ type EditorTestHelper interface {
 	TestInput(ch rune) error
 	TestDelete() error
 	GetRows() []string
-	GetContent(lineNum int) string
+	GetContentForTest(lineNum int) string
 	GetCharAtCursor() string
 	GetLineCount() int
 	SetKeyReader(reader KeyReader)
@@ -52,33 +54,37 @@ func (e *Editor) GetRows() []string {
 // SetKeyReader はキー入力読み取りインターフェースを設定する
 func (e *Editor) SetKeyReader(reader KeyReader) {
 	if e.input != nil {
-		e.input.SetKeyReader(reader)
+		e.input.keyReader = reader
 	}
 }
 
 // TestInput はテスト用に1文字入力をシミュレートする
 func (e *Editor) TestInput(ch rune) error {
-	e.buffer.InsertChar(ch)
+	pos := e.ui.GetCursor()
+	e.buffer.InsertChar(events.Position{X: pos.X, Y: pos.Y}, ch)
+	// カーソルを1つ進める
+	e.ui.SetCursor(pos.X+1, pos.Y)
 	return nil
 }
 
 // TestSetCursor はテスト用にカーソル位置を設定する
 func (e *Editor) TestSetCursor(x, y int) error {
 	if y >= e.buffer.GetLineCount() {
-		return fmt.Errorf("invalid y position: %d", y)
+		return fmt.Errorf("invalid cursor position: line %d is out of range", y)
 	}
-	e.buffer.SetCursor(x, y)
+	e.ui.SetCursor(x, y)
 	return nil
 }
 
 // TestGetCursor はテスト用にカーソル位置を取得する
 func (e *Editor) TestGetCursor() (x, y int) {
-	return e.buffer.GetCursorXY()
+	pos := e.ui.GetCursor()
+	return pos.X, pos.Y
 }
 
 // TestMoveCursor はテスト用にカーソルを移動する
 func (e *Editor) TestMoveCursor(m CursorMovement) error {
-	e.buffer.MoveCursor(m)
+	e.ui.MoveCursor(m, e.buffer)
 	return nil
 }
 
@@ -89,36 +95,29 @@ func isControl(c byte) bool {
 
 // TestProcessInput はテスト用にキー入力をシミュレートする
 func (e *Editor) TestProcessInput(input []byte) error {
+	pos := e.ui.GetCursor()
+
 	if len(input) >= 3 && input[0] == '\x1b' && input[1] == '[' {
-		switch input[2] {
-		case 'A': // 上矢印
-			e.buffer.MoveCursor(CursorUp)
-		case 'B': // 下矢印
-			e.buffer.MoveCursor(CursorDown)
-		case 'C': // 右矢印
-			e.buffer.MoveCursor(CursorRight)
-		case 'D': // 左矢印
-			e.buffer.MoveCursor(CursorLeft)
-		}
-		return nil
+		// ESC [ で始まるシーケンス
+		return e.TestMoveCursorByByte(input[2])
 	}
 
 	// バックスペースの処理
 	if len(input) == 1 && input[0] == 127 {
-		e.buffer.DeleteChar()
+		e.buffer.DeleteChar(events.Position{X: pos.X, Y: pos.Y})
 		return nil
 	}
 
 	// 通常の文字入力処理
 	if len(input) == 1 {
-		if !isControl(input[0]) {
-			e.buffer.InsertChar(rune(input[0]))
-		}
+		e.buffer.InsertChar(events.Position{X: pos.X, Y: pos.Y}, rune(input[0]))
+		e.ui.SetCursor(pos.X+1, pos.Y)
 	} else {
 		// マルチバイト文字の処理
 		r, _ := utf8.DecodeRune(input)
 		if r != utf8.RuneError {
-			e.buffer.InsertChar(r)
+			e.buffer.InsertChar(events.Position{X: pos.X, Y: pos.Y}, r)
+			e.ui.SetCursor(pos.X+1, pos.Y)
 		}
 	}
 
@@ -127,7 +126,22 @@ func (e *Editor) TestProcessInput(input []byte) error {
 
 // TestDelete はテスト用にバックスペースを実行する
 func (e *Editor) TestDelete() error {
-	e.buffer.DeleteChar()
+	pos := e.ui.GetCursor()
+
+	if pos.X > 0 {
+		// 行の途中での削除
+		e.buffer.DeleteChar(events.Position{X: pos.X, Y: pos.Y})
+		e.ui.SetCursor(pos.X-1, pos.Y) // カーソルを1つ左に移動
+	} else if pos.Y > 0 {
+		// 行頭での削除（前の行との結合）
+		prevRow := e.buffer.getRow(pos.Y - 1)
+		if prevRow != nil {
+			targetX := prevRow.GetRuneCount() // 前の行の末尾位置
+			e.buffer.DeleteChar(events.Position{X: pos.X, Y: pos.Y})
+			e.ui.SetCursor(targetX, pos.Y-1) // 前の行の末尾へ移動
+		}
+	}
+
 	return nil
 }
 
@@ -135,35 +149,57 @@ func (e *Editor) TestDelete() error {
 func (e *Editor) SetRowsForTest(rows []*Row) {
 	content := make([]string, len(rows))
 	for i, row := range rows {
-		content[i] = row.GetContent()
+		if row != nil {
+			content[i] = row.GetContent()
+		} else {
+			content[i] = ""
+		}
 	}
 	e.buffer.LoadContent(content)
+	// カーソル位置を先頭に戻す
+	e.ui.SetCursor(0, 0)
 }
 
 // TestMoveCursorByByte はテスト用にカーソルを移動する
 func (e *Editor) TestMoveCursorByByte(direction byte) error {
 	switch direction {
 	case 'A': // Up
-		e.buffer.MoveCursor(CursorUp)
+		e.ui.MoveCursor(CursorUp, e.buffer)
 	case 'B': // Down
-		e.buffer.MoveCursor(CursorDown)
+		e.ui.MoveCursor(CursorDown, e.buffer)
 	case 'C': // Right
-		e.buffer.MoveCursor(CursorRight)
+		e.ui.MoveCursor(CursorRight, e.buffer)
 	case 'D': // Left
+		e.ui.MoveCursor(CursorLeft, e.buffer)
 	default:
-		return fmt.Errorf("unknown direction: %c", direction)
+		return fmt.Errorf("invalid direction byte: %c", direction)
 	}
 	return nil
 }
 
 // GetCharAtCursor は現在のカーソル位置の文字を返す
 func (e *Editor) GetCharAtCursor() string {
-	return e.buffer.GetCharAtCursor()
+	pos := e.ui.GetCursor()
+	row := e.buffer.getRow(pos.Y)
+	if row == nil {
+		return ""
+	}
+
+	r, ok := row.GetRuneAt(pos.X)
+	if !ok {
+		return ""
+	}
+	return string(r)
 }
 
 // GetLineCount は行数を返す
 func (e *Editor) GetLineCount() int {
 	return e.buffer.GetLineCount()
+}
+
+// GetContentForTest は指定行の内容を返す（テスト用）
+func (e *Editor) GetContentForTest(lineNum int) string {
+	return e.buffer.GetContentLine(lineNum)
 }
 
 // MockStorage はテスト用のストレージモックです
@@ -180,21 +216,25 @@ func NewMockStorage() *MockStorage {
 
 // Load はモックされたファイルの内容を返します
 func (ms *MockStorage) Load(filename string) ([]string, error) {
-	if content, exists := ms.files[filename]; exists {
+	if content, ok := ms.files[filename]; ok {
 		return content, nil
 	}
-	return []string{}, nil
+	return nil, fmt.Errorf("file not found: %s", filename)
 }
 
 // Save はモックストレージにファイルの内容を保存します
 func (ms *MockStorage) Save(filename string, content []string) error {
-	ms.files[filename] = content
+	ms.files[filename] = make([]string, len(content))
+	copy(ms.files[filename], content)
 	return nil
 }
 
 // GetSavedContent は保存された内容を取得します（テスト用）
 func (ms *MockStorage) GetSavedContent(filename string) []string {
-	return ms.files[filename]
+	if content, ok := ms.files[filename]; ok {
+		return content
+	}
+	return nil
 }
 
 // MockKeyReader はテスト用のキー入力シミュレータ
@@ -214,8 +254,9 @@ func NewMockKeyReader(events []KeyEvent) *MockKeyReader {
 // ReadKey は事前に設定されたキーイベントを順番に返す
 func (m *MockKeyReader) ReadKey() (KeyEvent, []KeyEvent, error) {
 	if m.index >= len(m.events) {
-		return KeyEvent{}, nil, nil
+		return KeyEvent{}, nil, fmt.Errorf("no more events")
 	}
+
 	event := m.events[m.index]
 	m.index++
 	return event, nil, nil
@@ -233,23 +274,30 @@ type TestEditorOperations struct {
 
 // EditorOperationsインターフェースの実装
 func (e *TestEditorOperations) InsertChar(ch rune) {
-	e.editor.InsertChar(ch)
+	pos := e.editor.ui.GetCursor()
+	e.editor.buffer.InsertChar(events.Position{X: pos.X, Y: pos.Y}, ch)
+	e.editor.ui.SetCursor(pos.X+1, pos.Y)
 }
 
 func (e *TestEditorOperations) InsertChars(chars []rune) {
-	e.editor.InsertChars(chars)
+	pos := e.editor.ui.GetCursor()
+	e.editor.buffer.InsertChars(events.Position{X: pos.X, Y: pos.Y}, chars)
+	e.editor.ui.SetCursor(pos.X+len(chars), pos.Y)
 }
 
 func (e *TestEditorOperations) DeleteChar() {
-	e.editor.DeleteChar()
+	pos := e.editor.ui.GetCursor()
+	e.editor.buffer.DeleteChar(events.Position{X: pos.X, Y: pos.Y})
 }
 
 func (e *TestEditorOperations) InsertNewline() {
-	e.editor.InsertNewline()
+	pos := e.editor.ui.GetCursor()
+	e.editor.buffer.InsertNewline(events.Position{X: pos.X, Y: pos.Y})
+	e.editor.ui.HandleNewLine()
 }
 
 func (e *TestEditorOperations) MoveCursor(movement CursorMovement) {
-	e.editor.MoveCursor(movement)
+	e.editor.ui.MoveCursor(movement, e.editor.buffer)
 }
 
 func (e *TestEditorOperations) SaveFile() error {
@@ -277,7 +325,7 @@ func (e *TestEditorOperations) UpdateScroll() {
 }
 
 func (e *TestEditorOperations) GetCursor() Cursor {
-	return e.editor.GetCursor()
+	return e.editor.ui.GetCursor()
 }
 
 func (e *TestEditorOperations) GetContent(lineNum int) string {

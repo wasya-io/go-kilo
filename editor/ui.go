@@ -51,6 +51,11 @@ type LineUpdateState struct {
 	forceAll bool         // 全行の更新が必要かどうか
 }
 
+// Cursor はカーソル位置を管理する構造体
+type Cursor struct {
+	X, Y int
+}
+
 // UI は画面表示を管理する構造体
 type UI struct {
 	screenRows     int
@@ -69,8 +74,8 @@ type UI struct {
 	lineState      LineUpdateState
 	buffer         strings.Builder // 追加：バッファ
 	debugMessage   string          // デバッグメッセージ用
-	cursor         Cursor          // カーソル位置の管理（buffer.goで定義されたCursor型を使用）
-	lastCursorPos  Cursor          // 前回のカーソル位置を保存
+	cursor         Cursor          // Bufferで定義されているCursor型を使用
+	lastCursorPos  Cursor
 }
 
 type Offset struct {
@@ -96,8 +101,7 @@ func NewUI(rows, cols int, eventManager *events.EventManager) *UI {
 		lineState: LineUpdateState{
 			dirty:    make(map[int]bool),
 			forceAll: true, // 初期表示時に全行を更新対象とする
-		},
-		message:       "",
+		}, message: "",
 		messageArgs:   make([]interface{}, 0),
 		messageTime:   0,
 		debugMessage:  "",
@@ -111,21 +115,13 @@ func NewUI(rows, cols int, eventManager *events.EventManager) *UI {
 	return ui
 }
 
-// syncCursorWithBuffer はUIのカーソル位置をBufferに同期します
-func (ui *UI) syncCursorWithBuffer(buffer *Buffer) {
-	if buffer == nil {
-		return
-	}
-	buffer.SetCursor(ui.cursor.X, ui.cursor.Y)
-}
-
-// updateCursorFromBuffer はBufferのカーソル位置をUIに同期します
-func (ui *UI) updateCursorFromBuffer(buffer *Buffer) {
-	if buffer == nil {
-		return
-	}
-	cursorPos := buffer.GetCursor()
-	ui.SetCursor(cursorPos.X, cursorPos.Y)
+// HandleNewLine は改行時のカーソル位置を管理する
+func (ui *UI) HandleNewLine() {
+	ui.lastCursorPos = ui.cursor
+	ui.cursor.Y++
+	ui.cursor.X = 0
+	// カーソル位置の更新を画面更新キューに追加
+	ui.QueueUpdate(AreaCursor, HighPriority, nil)
 }
 
 // handleBufferEvent はバッファイベントを処理する
@@ -134,58 +130,28 @@ func (ui *UI) handleBufferEvent(event events.Event) {
 		ui.BeginBatchUpdate()
 		defer ui.EndBatchUpdate()
 
+		// バッファの変更タイプに応じた更新を行う
 		switch bufferEvent.SubType {
 		case events.BufferContentChanged:
-			if data, ok := bufferEvent.Data.(events.BufferChangeData); ok {
+			if bufferEvent.GetOperation() == events.BufferDeleteChar {
+				// 削除操作時の更新は既にDeleteChar処理で行われている
+				ui.QueueUpdate(AreaFull, MediumPriority, nil)
+			} else {
+				// 変更された行のみを更新
 				ui.QueueUpdate(AreaLine, MediumPriority, events.EditorUpdateData{
-					Lines:    data.AffectedLines,
-					ForceAll: true, // 全行を更新対象とする
+					Lines:    bufferEvent.GetAffectedLines(),
+					ForceAll: false,
 				})
 			}
-		case events.BufferCursorMoved:
-			if pos, ok := bufferEvent.Data.(events.Position); ok {
-				// カーソル位置の変更を反映
-				ui.SetCursor(pos.X, pos.Y)
-				ui.QueueUpdate(AreaCursor, HighPriority, pos)
-			}
 		case events.BufferStructuralChange:
+			// 改行などの構造的変更は全体更新
 			ui.QueueUpdate(AreaFull, MediumPriority, nil)
 		}
 
+		// 変更があった場合はステータス更新も行う
 		if bufferEvent.HasChanges() {
 			ui.QueueUpdate(AreaStatus, LowPriority, nil)
 		}
-	}
-}
-
-// handleUIEvent はUIイベントを処理する
-func (ui *UI) handleUIEvent(event *events.UIEvent) {
-	switch event.SubType {
-	case events.UIRefresh:
-		ui.QueueUpdate(AreaFull, HighPriority, nil)
-	case events.UIScroll:
-		if data, ok := event.Data.(events.ScrollData); ok {
-			ui.BeginBatchUpdate()
-			ui.handleScrollEvent(data)
-			ui.QueueUpdate(AreaFull, MediumPriority, nil)
-			ui.EndBatchUpdate()
-		}
-	case events.UIStatusMessage:
-		if data, ok := event.Data.(events.StatusMessageData); ok {
-			ui.QueueUpdate(AreaMessage, LowPriority, data)
-		}
-	case events.UIEditorPartialRefresh:
-		if data, ok := event.Data.(events.EditorUpdateData); ok {
-			ui.QueueUpdate(AreaLine, MediumPriority, data)
-		}
-	case events.UICursorUpdate:
-		if pos, ok := event.Data.(events.Position); ok {
-			ui.QueueUpdate(AreaCursor, HighPriority, pos)
-		}
-	case events.UIStatusBarRefresh:
-		ui.refreshStatusBar()
-	case events.UIMessageBarRefresh:
-		ui.refreshMessageBar()
 	}
 }
 
@@ -214,11 +180,6 @@ func (ui *UI) handlePartialRefresh(data events.EditorUpdateData) {
 		ui.lineState.dirty[line] = true
 	}
 	ui.needsRefresh = true
-}
-
-// handleCursorUpdate はカーソル位置の更新を処理する
-func (ui *UI) handleCursorUpdate(pos events.Position) {
-	ui.updateCursorPosition(pos)
 }
 
 // handleStatusMessage はステータスメッセージを処理する
@@ -294,26 +255,6 @@ func (ui *UI) GetOffset() Offset {
 	return ui.offset
 }
 
-// abs は整数の絶対値を返す
-func abs(n int) int {
-	if n < 0 {
-		return -n
-	}
-	return n
-}
-
-// markLinesForUpdate は更新が必要な行をマークする
-func (ui *UI) markLinesForUpdate(lines []int) {
-	// 部分更新のための行管理を実装
-	ui.needsRefresh = true // 現時点では全体更新にフォールバック
-}
-
-// updateCursorPosition はカーソル位置を更新する
-func (ui *UI) updateCursorPosition(pos events.Position) {
-	// カーソル位置の更新をトリガー
-	ui.needsRefresh = true
-}
-
 // refreshStatusBar はステータスバーを更新する
 func (ui *UI) refreshStatusBar() {
 	ui.needsRefresh = true
@@ -324,23 +265,16 @@ func (ui *UI) refreshMessageBar() {
 	ui.needsRefresh = true
 }
 
-// publishRefreshEvent は画面更新イベントを発行する
-func (ui *UI) publishRefreshEvent(fullRefresh bool) {
-	if ui.eventManager == nil {
-		return
-	}
-
-	event := events.NewUIEvent(events.UIRefresh, struct{ FullRefresh bool }{FullRefresh: fullRefresh})
-	ui.eventManager.Publish(event)
-}
-
 // publishCursorUpdateEvent はカーソル更新イベントを発行する
-func (ui *UI) publishCursorUpdateEvent(pos events.Position) {
+func (ui *UI) publishCursorUpdateEvent() {
 	if ui.eventManager == nil {
 		return
 	}
 
-	event := events.NewUIEvent(events.UICursorUpdate, pos)
+	event := events.NewCursorUpdateEvent(events.CursorPosition{
+		X: ui.cursor.X,
+		Y: ui.cursor.Y,
+	})
 	ui.eventManager.Publish(event)
 }
 
@@ -394,15 +328,6 @@ func (ui *UI) getScreenPosition(cursor events.Position, buffer *Buffer, rowOffse
 	}
 
 	return screenX, screenY
-}
-
-// setCursor は画面上のカーソル位置を設定する
-func (ui *UI) setCursor(x, y int) error {
-	if x < 0 || y < 0 || x >= ui.screenCols || y >= ui.screenRows {
-		return fmt.Errorf("invalid cursor position: (%d, %d)", x, y)
-	}
-	ui.buffer.WriteString(ui.moveCursor(y, x))
-	return nil
 }
 
 // drawStatusBar はステータスバーを描画する
@@ -472,7 +397,7 @@ func (ui *UI) RefreshScreen(buffer *Buffer, filename string, rowOffset, colOffse
 	}
 
 	// カーソル位置の設定（画面バッファに追加）
-	cursor := buffer.GetCursor()
+	cursor := ui.GetCursor() // Bufferからの直接参照をUI内部状態の参照に変更
 	screenX, screenY := ui.getScreenPosition(events.Position{Y: cursor.Y, X: cursor.X}, buffer, rowOffset, colOffset)
 	ui.buffer.WriteString(ui.moveCursor(screenY, screenX))
 
@@ -668,30 +593,28 @@ func (ui *UI) processPendingUpdates() {
 
 // processUpdate は単一の更新要求を処理する
 func (ui *UI) processUpdate(update UpdateRequest) {
-	switch update.area {
+	ui.processAreaUpdates(update.area, update.data)
+}
+
+// カーソル位置の更新処理を分離
+func (ui *UI) processAreaUpdates(area UpdateArea, data interface{}) {
+	switch area {
 	case AreaCursor:
-		if pos, ok := update.data.(events.Position); ok {
-			ui.updateCursorPosition(pos)
-		}
+		// カーソル更新の視覚的な処理のみを行う
+		ui.needsRefresh = true
 	case AreaLine:
-		if data, ok := update.data.(events.EditorUpdateData); ok {
+		if data, ok := data.(events.EditorUpdateData); ok {
 			ui.handlePartialRefresh(data)
 		}
 	case AreaStatus:
 		ui.refreshStatusBar()
 	case AreaMessage:
-		if data, ok := update.data.(events.StatusMessageData); ok {
+		if data, ok := data.(events.StatusMessageData); ok {
 			ui.handleStatusMessage(data)
 		}
 	case AreaFull:
 		ui.needsRefresh = true
 	}
-}
-
-// clearUpdateState は更新状態をリセットする
-func (ui *UI) clearUpdateState() {
-	ui.lineState.forceAll = false
-	ui.lineState.dirty = make(map[int]bool)
 }
 
 // SetDebugMessage はデバッグ用のメッセージを設定する
@@ -704,96 +627,107 @@ func (ui *UI) GetCursor() Cursor {
 	return ui.cursor
 }
 
-// SetCursor はカーソル位置を設定する
+// SetCursor はカーソル位置を設定し、必要な更新をキューに追加する
 func (ui *UI) SetCursor(x, y int) {
+	if ui.cursor.X == x && ui.cursor.Y == y {
+		return // 位置が変わらない場合は更新しない
+	}
 	ui.lastCursorPos = ui.cursor
 	ui.cursor = Cursor{X: x, Y: y}
-
-	// カーソル位置が変更された場合のみイベントを発行
-	if ui.lastCursorPos != ui.cursor {
-		ui.publishCursorUpdateEvent(ui.cursor.toPosition())
-	}
+	// カーソルの変更を通知
+	ui.publishCursorUpdateEvent()
+	// 画面更新をキューに追加
+	ui.QueueUpdate(AreaCursor, HighPriority, nil)
 }
 
-// MoveCursor は指定された方向にカーソルを移動する
+// MoveCursor は指定された方向にカーソルを移動し、必要な更新をキューに追加する
 func (ui *UI) MoveCursor(movement CursorMovement, buffer *Buffer) {
-	if buffer.GetLineCount() == 0 {
+	if buffer == nil || buffer.GetLineCount() == 0 {
 		return
 	}
 
-	ui.lastCursorPos = ui.cursor
 	currentRow := buffer.getRow(ui.cursor.Y)
 	if currentRow == nil {
 		return
 	}
 
+	newPos := ui.calculateNewCursorPosition(movement, buffer, currentRow)
+	if newPos != ui.cursor {
+		ui.lastCursorPos = ui.cursor
+		ui.cursor = newPos
+		// カーソルの変更を画面更新キューに追加
+		ui.QueueUpdate(AreaCursor, HighPriority, nil)
+	}
+}
+
+// calculateNewCursorPosition は新しいカーソル位置を計算する（移動処理のロジックを分離）
+func (ui *UI) calculateNewCursorPosition(movement CursorMovement, buffer *Buffer, currentRow *Row) Cursor {
+	newPos := ui.cursor // 現在の位置からコピーを作成
+
 	switch movement {
 	case CursorUp:
-		if ui.cursor.Y > 0 {
-			currentVisualX := currentRow.OffsetToScreenPosition(ui.cursor.X)
-			ui.cursor.Y--
-			targetRow := buffer.getRow(ui.cursor.Y)
+		if newPos.Y > 0 {
+			currentVisualX := currentRow.OffsetToScreenPosition(newPos.X)
+			newPos.Y--
+			targetRow := buffer.getRow(newPos.Y)
 			if targetRow != nil {
-				ui.cursor.X = targetRow.ScreenPositionToOffset(currentVisualX)
-			}
-		}
-	case MouseWheelUp:
-		targetY := ui.cursor.Y - 3
-		if targetY < 0 {
-			targetY = 0
-		}
-		if ui.cursor.Y > 0 {
-			currentVisualX := currentRow.OffsetToScreenPosition(ui.cursor.X)
-			ui.cursor.Y = targetY
-			targetRow := buffer.getRow(ui.cursor.Y)
-			if targetRow != nil {
-				ui.cursor.X = targetRow.ScreenPositionToOffset(currentVisualX)
+				newPos.X = targetRow.ScreenPositionToOffset(currentVisualX)
 			}
 		}
 	case CursorDown:
-		if ui.cursor.Y < buffer.GetLineCount()-1 {
-			currentVisualX := currentRow.OffsetToScreenPosition(ui.cursor.X)
-			ui.cursor.Y++
-			targetRow := buffer.getRow(ui.cursor.Y)
+		if newPos.Y < buffer.GetLineCount()-1 {
+			currentVisualX := currentRow.OffsetToScreenPosition(newPos.X)
+			newPos.Y++
+			targetRow := buffer.getRow(newPos.Y)
 			if targetRow != nil {
-				ui.cursor.X = targetRow.ScreenPositionToOffset(currentVisualX)
-			}
-		}
-	case MouseWheelDown:
-		targetY := ui.cursor.Y + 3
-		if targetY >= buffer.GetLineCount() {
-			targetY = buffer.GetLineCount() - 1
-		}
-		if ui.cursor.Y < buffer.GetLineCount()-1 {
-			currentVisualX := currentRow.OffsetToScreenPosition(ui.cursor.X)
-			ui.cursor.Y = targetY
-			targetRow := buffer.getRow(ui.cursor.Y)
-			if targetRow != nil {
-				ui.cursor.X = targetRow.ScreenPositionToOffset(currentVisualX)
+				newPos.X = targetRow.ScreenPositionToOffset(currentVisualX)
 			}
 		}
 	case CursorLeft:
-		if ui.cursor.X > 0 {
-			ui.cursor.X--
-		} else if ui.cursor.Y > 0 {
-			ui.cursor.Y--
-			targetRow := buffer.getRow(ui.cursor.Y)
+		if newPos.X > 0 {
+			newPos.X--
+		} else if newPos.Y > 0 {
+			newPos.Y--
+			targetRow := buffer.getRow(newPos.Y)
 			if targetRow != nil {
-				ui.cursor.X = targetRow.GetRuneCount()
+				newPos.X = targetRow.GetRuneCount()
 			}
 		}
 	case CursorRight:
 		maxX := currentRow.GetRuneCount()
-		if ui.cursor.X < maxX {
-			ui.cursor.X++
-		} else if ui.cursor.Y < buffer.GetLineCount()-1 {
-			ui.cursor.Y++
-			ui.cursor.X = 0
+		if newPos.X < maxX {
+			newPos.X++
+		} else if newPos.Y < buffer.GetLineCount()-1 {
+			newPos.Y++
+			newPos.X = 0
+		}
+	case MouseWheelUp:
+		targetY := newPos.Y - 3
+		if targetY < 0 {
+			targetY = 0
+		}
+		if newPos.Y > 0 {
+			currentVisualX := currentRow.OffsetToScreenPosition(newPos.X)
+			newPos.Y = targetY
+			targetRow := buffer.getRow(newPos.Y)
+			if targetRow != nil {
+				newPos.X = targetRow.ScreenPositionToOffset(currentVisualX)
+			}
+		}
+	case MouseWheelDown:
+		targetY := newPos.Y + 3
+		if targetY >= buffer.GetLineCount() {
+			targetY = buffer.GetLineCount() - 1
+		}
+		if newPos.Y < buffer.GetLineCount()-1 {
+			currentVisualX := currentRow.OffsetToScreenPosition(newPos.X)
+			newPos.Y = targetY
+			targetRow := buffer.getRow(newPos.Y)
+			if targetRow != nil {
+				newPos.X = targetRow.ScreenPositionToOffset(currentVisualX)
+			}
 		}
 	}
 
-	// カーソル位置が変更された場合のみイベントを発行
-	if ui.lastCursorPos != ui.cursor {
-		ui.publishCursorUpdateEvent(ui.cursor.toPosition())
-	}
+	return newPos
 }
