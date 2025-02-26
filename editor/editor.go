@@ -16,21 +16,23 @@ import (
 
 // Editor はエディタの状態を管理する構造体
 type Editor struct {
-	term             *terminalState
-	ui               *UI
-	quit             chan struct{}
-	isQuitting       bool
-	quitWarningShown bool
-	buffer           *Buffer
-	eventBuffer      []KeyEvent
-	fileManager      *FileManager
-	input            *InputHandler
-	config           *Config
-	eventManager     *events.EventManager // 追加: イベントマネージャー
-	termState        *terminalState
-	cleanupOnce      sync.Once
-	cleanupChan      chan struct{}
-	logger           *logger.Logger
+	term              *terminalState
+	ui                *UI
+	quit              chan struct{}
+	isQuitting        bool
+	quitWarningShown  bool
+	buffer            *Buffer
+	eventBuffer       []KeyEvent
+	fileManager       *FileManager
+	input             *InputHandler
+	config            *Config
+	eventManager      *events.EventManager // 追加: イベントマネージャー
+	termState         *terminalState
+	cleanupOnce       sync.Once
+	cleanupChan       chan struct{}
+	logger            *logger.Logger
+	statusMessage     string
+	statusMessageTime int
 }
 
 type WinSize struct {
@@ -118,6 +120,9 @@ func New(testMode bool, eventManager *events.EventManager, buffer *Buffer, fileM
 			}
 		}()
 	}
+
+	// システムイベントハンドラの登録
+	e.eventManager.RegisterSystemEventHandler(events.NewDefaultSystemEventHandler(e, fileManager))
 
 	return e, nil
 }
@@ -303,12 +308,15 @@ func (e *Editor) handleFileEvent(event *events.FileEvent) {
 }
 
 // publishUIEvent はUIイベントを発行する
+// 現在未使用だが、将来的なUI更新の統合のために保持
+/*
 func (e *Editor) publishUIEvent(subType events.UIEventSubType, data interface{}) {
 	if e.eventManager != nil {
 		event := events.NewUIEvent(subType, data)
 		e.eventManager.Publish(event)
 	}
 }
+*/
 
 // Cleanup は終了時の後処理を行う
 func (e *Editor) Cleanup() {
@@ -460,31 +468,12 @@ func (e *Editor) Quit() {
 
 // OpenFile は指定されたファイルを読み込む
 func (e *Editor) OpenFile(filename string) error {
-	e.logger.Log("file", fmt.Sprintf("Opening file: %s", filename))
-
-	if err := e.fileManager.OpenFile(filename); err != nil {
-		e.logger.Log("error", fmt.Sprintf("Failed to open file: %s, error: %v", filename, err))
-		return err
-	}
-	e.setStatusMessage("File loaded")
-	return nil
+	return e.fileManager.OpenFile(filename)
 }
 
 // SaveFile は現在の内容をファイルに保存する
 func (e *Editor) SaveFile() error {
-	e.logger.Log("file", "Saving current file")
-
-	if err := e.fileManager.SaveCurrentFile(); err != nil {
-		if err == ErrNoFilename {
-			e.logger.Log("error", "No filename specified for save")
-			e.setStatusMessage("No filename")
-			return nil
-		}
-		e.logger.Log("error", fmt.Sprintf("Failed to save file: %v", err))
-		return err
-	}
-	e.setStatusMessage("File saved")
-	return nil
+	return e.fileManager.SaveCurrentFile()
 }
 
 // createCommand はキーイベントからコマンドを作成する
@@ -575,7 +564,22 @@ func (e *Editor) setStatusMessage(format string, args ...interface{}) {
 
 // SetStatusMessage はステータスメッセージを設定する（EditorOperations用の公開メソッド）
 func (e *Editor) SetStatusMessage(format string, args ...interface{}) {
+	// まずステータスメッセージを直接設定
+	e.statusMessage = fmt.Sprintf(format, args...)
+	e.statusMessageTime = e.config.StatusMessageDuration
+
+	// イベントとしては発行しない - 無限ループを防ぐ
 	e.setStatusMessage(format, args...)
+}
+
+// IsQuitWarningShown は終了警告が表示されているかを返す
+func (e *Editor) IsQuitWarningShown() bool {
+	return e.quitWarningShown
+}
+
+// SetQuitWarningShown は終了警告の表示状態を設定する
+func (e *Editor) SetQuitWarningShown(shown bool) {
+	e.quitWarningShown = shown
 }
 
 // EditorOperationsインターフェースの実装
@@ -674,8 +678,8 @@ func (e *Editor) periodicSnapshot() {
 // saveBufferToTempFile はバッファの内容を一時ファイルに保存する
 func (e *Editor) saveBufferToTempFile() {
 	baseName := "untitled"
-	if e.buffer.Filename != "" {
-		baseName = e.buffer.Filename
+	if filename := e.fileManager.GetFilename(); filename != "" {
+		baseName = filename
 	}
 	tempFile := fmt.Sprintf("%s.recovery", baseName)
 	if err := e.fileManager.SaveFile(tempFile, e.buffer.GetAllLines()); err != nil {
@@ -731,4 +735,14 @@ func (e *Editor) Run() error {
 			}
 		}
 	}
+}
+
+// GetEventManager はEventManagerを返す
+func (e *Editor) GetEventManager() *events.EventManager {
+	return e.eventManager
+}
+
+// GetFilename は現在のファイル名を返す
+func (e *Editor) GetFilename() string {
+	return e.fileManager.GetFilename()
 }

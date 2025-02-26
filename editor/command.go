@@ -1,5 +1,7 @@
 package editor
 
+import "github.com/wasya-io/go-kilo/editor/events"
+
 // Command はエディタのコマンドを表すインターフェース
 type Command interface {
 	Execute() error
@@ -99,34 +101,54 @@ func (c *MoveCursorCommand) Execute() error {
 
 // SaveCommand はファイル保存コマンド
 type SaveCommand struct {
-	editor EditorOperations
+	editor interface {
+		GetEventManager() *events.EventManager
+		GetFilename() string
+		IsDirty() bool
+	}
 }
 
-func NewSaveCommand(editor EditorOperations) *SaveCommand {
+func NewSaveCommand(editor interface {
+	GetEventManager() *events.EventManager
+	GetFilename() string
+	IsDirty() bool
+}) *SaveCommand {
 	return &SaveCommand{editor: editor}
 }
 
 func (c *SaveCommand) Execute() error {
-	if err := c.editor.SaveFile(); err != nil {
-		c.editor.SetStatusMessage("Can't save! I/O error: %s", err)
-		return err
+	// 変更がない場合は保存不要
+	if !c.editor.IsDirty() {
+		return nil
 	}
-	return nil
+
+	event := events.NewSaveEvent(c.editor.GetFilename(), false)
+	return c.editor.GetEventManager().Publish(event)
 }
 
 // QuitCommand は終了コマンド
 type QuitCommand struct {
-	editor EditorOperations
+	editor interface {
+		GetEventManager() *events.EventManager
+		IsDirty() bool
+		IsQuitWarningShown() bool
+	}
 }
 
-func NewQuitCommand(editor EditorOperations) *QuitCommand {
+func NewQuitCommand(editor interface {
+	GetEventManager() *events.EventManager
+	IsDirty() bool
+	IsQuitWarningShown() bool
+}) *QuitCommand {
 	return &QuitCommand{editor: editor}
 }
 
 func (c *QuitCommand) Execute() error {
-	// isDirtyフラグを変更せずに終了
-	c.editor.Quit()
-	return nil
+	event := events.NewQuitEvent(
+		c.editor.IsDirty(),
+		c.editor.IsQuitWarningShown(),
+	)
+	return c.editor.GetEventManager().Publish(event)
 }
 
 // InsertTabCommand はタブ挿入コマンド

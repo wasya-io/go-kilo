@@ -2,6 +2,7 @@ package editor
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/wasya-io/go-kilo/editor/events"
 )
@@ -12,7 +13,6 @@ type Buffer struct {
 	isDirty      bool
 	rowCache     map[int]*Row
 	eventManager *events.EventManager
-	Filename     string // ファイル名を追加
 }
 
 // NewBuffer は新しいBufferインスタンスを作成する
@@ -312,6 +312,18 @@ func (b *Buffer) publishPartialRefreshEvent(lines []int) {
 	}
 	event := events.NewUIEvent(events.UIEditorPartialRefresh, data)
 	b.eventManager.Publish(event)
+}
+
+// String は現在のバッファの内容を文字列として返す
+func (b *Buffer) String() string {
+	var sb strings.Builder
+	for i, content := range b.content {
+		sb.WriteString(content)
+		if i < len(b.content)-1 {
+			sb.WriteRune('\n')
+		}
+	}
+	return sb.String()
 }
 
 // Row は1行のテキストデータと関連情報を保持する

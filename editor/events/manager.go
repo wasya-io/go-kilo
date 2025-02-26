@@ -125,32 +125,35 @@ func (em *EventMonitor) ClearLogs() {
 
 // EventManager はイベントの管理を行う
 type EventManager struct {
-	subscribers     map[EventType][]EventSubscriber
-	mu              sync.RWMutex
-	batchMode       bool
-	batchEvents     []Event
-	updateQueue     *UpdateQueue
-	snapshots       []RecoverySnapshot
-	maxSnapshots    int
-	onError         func(error)
-	errorHandlers   map[EventType]func(Event, error)
-	monitor         *EventMonitor
-	recoveryManager *RecoveryManager
+	subscribers        map[EventType][]EventSubscriber
+	mu                 sync.RWMutex
+	batchMode          bool
+	batchEvents        []Event
+	updateQueue        *UpdateQueue
+	snapshots          []RecoverySnapshot
+	maxSnapshots       int
+	onError            func(error)
+	errorHandlers      map[EventType]func(Event, error)
+	monitor            *EventMonitor
+	recoveryManager    *RecoveryManager
+	systemEventHandler SystemEventHandler
+	processingEvents   map[EventType]int // イベント処理中のカウンター
+	maxRecursionDepth  int               // 最大再帰深度
 }
 
 // NewEventManager は新しいEventManagerを作成する
 func NewEventManager() *EventManager {
-	em := &EventManager{
-		subscribers:   make(map[EventType][]EventSubscriber),
-		batchEvents:   make([]Event, 0),
-		updateQueue:   NewUpdateQueue(),
-		snapshots:     make([]RecoverySnapshot, 0),
-		maxSnapshots:  10,
-		errorHandlers: make(map[EventType]func(Event, error)),
-		monitor:       NewEventMonitor(1000),
+	return &EventManager{
+		subscribers:       make(map[EventType][]EventSubscriber),
+		batchEvents:       make([]Event, 0),
+		updateQueue:       NewUpdateQueue(),
+		snapshots:         make([]RecoverySnapshot, 0),
+		maxSnapshots:      10,
+		errorHandlers:     make(map[EventType]func(Event, error)),
+		monitor:           NewEventMonitor(1000),
+		processingEvents:  make(map[EventType]int),
+		maxRecursionDepth: 3, // 最大3階層まで
 	}
-	em.recoveryManager = NewRecoveryManager(em, em.monitor)
-	return em
 }
 
 // Subscribe はイベントタイプに対するサブスクライバーを登録する
@@ -240,10 +243,15 @@ func (em *EventManager) RecoverFromSnapshot(timestamp time.Time) error {
 
 // handleError はエラーを処理し、必要に応じて復元を試みる
 func (em *EventManager) handleError(event Event, err error) {
+	// システムイベントの場合、特別なエラー処理を行う
+	if systemEvent, ok := event.(SystemEvent); ok {
+		em.handleSystemEventError(systemEvent, err)
+		return
+	}
+
 	// エラーの構造化
 	var structuredErr *StructuredError
 	if !errors.As(err, &structuredErr) {
-		// 未構造化のエラーを構造化する
 		structuredErr = NewStructuredError(
 			ErrorCategoryUnknown,
 			"Unhandled error occurred",
@@ -258,45 +266,42 @@ func (em *EventManager) handleError(event Event, err error) {
 		severity = SeverityCritical
 	}
 
-	// エラーレポートを作成
-	report := NewErrorReport(structuredErr, event.GetType())
-
 	// エラーをログに記録
 	em.monitor.LogError(severity, event.GetType(), structuredErr, structuredErr.Message)
 
 	// 復元を試みる
 	if recoveryErr := em.recoveryManager.AttemptRecovery(event, structuredErr); recoveryErr != nil {
-		// リカバリー情報を追加
-		report.WithRecoveryInfo(&RecoveryInfo{
-			AttemptCount:  1,
-			LastStrategy:  em.recoveryManager.strategy,
-			SuccessCount:  0,
-			FailureCount:  1,
-			LastAttemptAt: time.Now(),
-		})
-
-		// 復元に失敗した場合、エラーハンドラを呼び出す
 		if handler, ok := em.errorHandlers[event.GetType()]; ok {
 			handler(event, structuredErr)
 		} else if em.onError != nil {
 			em.onError(structuredErr)
 		}
-		return
 	}
+}
 
-	// 復元に成功した場合
-	report.WithRecoveryInfo(&RecoveryInfo{
-		AttemptCount:   1,
-		LastStrategy:   em.recoveryManager.strategy,
-		SuccessCount:   1,
-		FailureCount:   0,
-		LastAttemptAt:  time.Now(),
-		RecoveredState: event.GetCurrentState(),
-	})
+// handleSystemEventError はシステムイベントのエラー処理を行う
+func (em *EventManager) handleSystemEventError(event SystemEvent, err error) {
+	// エラーをログに記録
+	em.monitor.LogError(SeverityError, SystemEventType, err, fmt.Sprintf("System event error: %v", err))
 
-	// 成功ログを記録
-	em.monitor.LogError(SeverityInfo, event.GetType(), nil,
-		fmt.Sprintf("Successfully recovered from error: %s", structuredErr.Message))
+	// システムイベント固有の復元処理
+	switch event.GetSystemType() {
+	case SystemSave:
+		// 保存エラーの場合、ステータスを維持
+		if saveEvent, ok := event.(*SaveEvent); ok {
+			em.monitor.LogError(SeverityWarning, SystemEventType, err,
+				fmt.Sprintf("Save failed for file: %s", saveEvent.Filename))
+		}
+	case SystemQuit:
+		// 終了エラーの場合、警告メッセージを記録
+		if quitEvent, ok := event.(*QuitEvent); ok {
+			statusMsg := "Failed to quit"
+			if quitEvent.SaveNeeded {
+				statusMsg += ": unsaved changes"
+			}
+			em.monitor.LogError(SeverityWarning, SystemEventType, err, statusMsg)
+		}
+	}
 }
 
 // SetRecoveryStrategy は復元戦略を設定する
@@ -305,23 +310,44 @@ func (em *EventManager) SetRecoveryStrategy(strategy RecoveryStrategy) {
 }
 
 // Publish はイベントを発行する
-func (em *EventManager) Publish(event Event) {
+func (em *EventManager) Publish(event Event) error {
 	em.mu.RLock()
 	defer em.mu.RUnlock()
 
+	// イベントループ検出
+	if depth := em.processingEvents[event.GetType()]; depth >= em.maxRecursionDepth {
+		em.monitor.LogError(SeverityWarning, event.GetType(), fmt.Errorf("event loop detected"),
+			"Maximum recursion depth exceeded")
+		return nil // イベントを無視して処理を継続
+	}
+
+	// イベント処理深度をインクリメント
+	em.processingEvents[event.GetType()]++
+	defer func() {
+		em.processingEvents[event.GetType()]--
+	}()
+
 	if event.HasError() {
 		em.handleError(event, event.GetError())
+		return event.GetError()
 	}
 
 	if em.batchMode {
 		em.batchEvents = append(em.batchEvents, event)
-		return
+		return nil
+	}
+
+	// システムイベントの場合は即時処理
+	if _, isSystemEvent := event.(SystemEvent); isSystemEvent {
+		em.processSystemEvent(event)
+		// エラーがある場合はhandleErrorで処理済み
+		return nil
 	}
 
 	// 非バッチモードの場合は更新キューに追加し、即時に処理
 	em.updateQueue.Add(event)
-	// TODO: 非バッチモード時は即時に処理したいが不具合があるので保留。コマンドで行なっている処理をすべて代替する必要がある
-	// em.ProcessUpdates()
+	em.ProcessUpdates()
+	return nil
 }
 
 // ProcessUpdates は更新キューを処理する
@@ -391,4 +417,33 @@ func (em *EventManager) GetErrorStats() map[EventType]int {
 		stats[log.EventType]++
 	}
 	return stats
+}
+
+func (em *EventManager) processSystemEvent(event Event) {
+	if systemEvent, ok := event.(SystemEvent); ok {
+		if handler := em.systemEventHandler; handler != nil {
+			var err error
+			switch systemEvent.GetSystemType() {
+			case SystemSave:
+				if saveEvent, ok := systemEvent.(*SaveEvent); ok {
+					err = handler.HandleSaveEvent(saveEvent)
+				}
+			case SystemQuit:
+				if quitEvent, ok := systemEvent.(*QuitEvent); ok {
+					err = handler.HandleQuitEvent(quitEvent)
+				}
+			case SystemStatus:
+				if statusEvent, ok := systemEvent.(*StatusEvent); ok {
+					err = handler.HandleStatusEvent(statusEvent)
+				}
+			}
+			if err != nil {
+				em.handleError(event, err)
+			}
+		}
+	}
+}
+
+func (em *EventManager) RegisterSystemEventHandler(handler SystemEventHandler) {
+	em.systemEventHandler = handler
 }

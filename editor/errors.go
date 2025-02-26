@@ -2,7 +2,8 @@ package editor
 
 import "errors"
 
+// エラー定義
 var (
-	// ErrNoFilename はファイル名が設定されていない場合のエラー
+	ErrNoBuffer   = errors.New("no buffer available")
 	ErrNoFilename = errors.New("no filename specified")
 )

@@ -23,10 +23,11 @@ func GetTabWidth() int {
 
 // Config はエディタの設定を保持する構造体
 type Config struct {
-	TabWidth     int
-	SmoothScroll bool
-	ScrollSteps  int
-	DebugMode    bool
+	TabWidth              int
+	SmoothScroll          bool
+	ScrollSteps           int
+	DebugMode             bool
+	StatusMessageDuration int // ステータスメッセージの表示時間（秒）
 }
 
 // LoadConfig は.envファイルから設定を読み込む
@@ -35,10 +36,11 @@ func LoadConfig() *Config {
 	godotenv.Load()
 
 	config := &Config{
-		TabWidth:     defaultTabWidth,
-		SmoothScroll: true,
-		ScrollSteps:  3,
-		DebugMode:    false,
+		TabWidth:              defaultTabWidth,
+		SmoothScroll:          true,
+		ScrollSteps:           3,
+		DebugMode:             false,
+		StatusMessageDuration: 5, // デフォルトは5秒
 	}
 
 	// TAB_WIDTHの環境変数を読み込む

@@ -1,60 +1,65 @@
 package events
 
-// Event は全てのイベントの基本インターフェース
-type Event interface {
-	GetType() EventType
-	// エラーハンドリング用のメソッドを追加
-	HasError() bool
-	GetError() error
-	SetError(err error)
-	// リカバリー用のメソッドを追加
-	GetPreviousState() interface{}
-	GetCurrentState() interface{}
-}
+import "time"
 
-// EventType はイベントの種類を表す
-type EventType int
+// EventType はイベントの種類を表す型
+type EventType string
 
+// イベントタイプの定義
 const (
-	BufferEventType EventType = iota
-	UIEventType
-	FileEventType
-	InputEventType
+	SystemEventType EventType = "system"
+	BufferEventType EventType = "buffer"
+	UIEventType     EventType = "ui"
+	FileEventType   EventType = "file"
+	InputEventType  EventType = "input"
 )
 
-// BaseEvent は全てのイベントの基本構造体
-type BaseEvent struct {
-	Type      EventType
-	err       error
-	prevState interface{}
-	currState interface{}
+// イベントの優先度を表す定数
+const (
+	HighPriority   = 3
+	MediumPriority = 2
+	LowPriority    = 1
+)
+
+// Event は基本的なイベントのインターフェース
+type Event interface {
+	GetType() EventType
+	GetTime() time.Time
+	GetPriority() int
+	HasError() bool
+	GetError() error
+	GetCurrentState() map[string]interface{}
 }
 
-func (e BaseEvent) GetType() EventType {
+// BaseEvent は基本的なイベントの実装
+type BaseEvent struct {
+	Type     EventType
+	Time     time.Time
+	Priority int
+	Error    error
+	State    map[string]interface{}
+}
+
+func (e *BaseEvent) GetType() EventType {
 	return e.Type
 }
 
+func (e *BaseEvent) GetTime() time.Time {
+	return e.Time
+}
+
+func (e *BaseEvent) GetPriority() int {
+	return e.Priority
+}
+
 func (e *BaseEvent) HasError() bool {
-	return e.err != nil
+	return e.Error != nil
 }
 
 func (e *BaseEvent) GetError() error {
-	return e.err
+	return e.Error
 }
 
-func (e *BaseEvent) SetError(err error) {
-	e.err = err
-}
-
-func (e *BaseEvent) GetPreviousState() interface{} {
-	return e.prevState
-}
-
-func (e *BaseEvent) GetCurrentState() interface{} {
-	return e.currState
-}
-
-func (e *BaseEvent) SetStates(prev, curr interface{}) {
-	e.prevState = prev
-	e.currState = curr
+func (e *BaseEvent) GetCurrentState() map[string]interface{} {
+	return e.State
 }
