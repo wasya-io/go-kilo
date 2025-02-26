@@ -624,6 +624,13 @@ func TestShiftTabHandling(t *testing.T) {
 			cursorX:   3,
 			wantCount: 2,
 		},
+		{
+			name:      "TAB_WIDTH=2: delete 1 space from 3 spaces",
+			tabWidth:  "2",
+			content:   "  a  bc",
+			cursorX:   5,
+			wantCount: 2,
+		},
 	}
 
 	for _, tt := range tests {

@@ -157,10 +157,46 @@ func NewUndentCommand(editor EditorOperations) *UndentCommand {
 }
 
 func (c *UndentCommand) Execute() error {
-	// 現在の行の先頭から適切な数の空白を削除
+	cursor := c.editor.GetCursor()
+	content := c.editor.GetContent(cursor.Y)
+
+	// カーソルが行頭にある場合は処理を行わない
+	if cursor.X <= 0 {
+		return nil
+	}
+
+	// カーソル位置の左側のスペース数を数える
+	leftSpaces := 0
+	for i := cursor.X - 1; i >= 0; i-- {
+		if content[i] != ' ' {
+			break
+		}
+		leftSpaces++
+	}
+
+	if leftSpaces == 0 {
+		return nil // 左側にスペースがない場合は何もしない
+	}
+
+	// 削除するスペース数を計算
 	tabWidth := GetTabWidth()
-	for i := 0; i < tabWidth; i++ {
+	spacesToDelete := leftSpaces % tabWidth
+	if spacesToDelete == 0 {
+		spacesToDelete = tabWidth
+	}
+
+	// カーソルを1つ左に移動し、削除を開始
+	// c.editor.MoveCursor(CursorLeft)
+
+	// スペースを削除
+	for i := 0; i < spacesToDelete; i++ {
 		c.editor.DeleteChar()
 	}
+
+	// 残りのカーソル移動
+	for i := 1; i < (spacesToDelete - 1); i++ {
+		c.editor.MoveCursor(CursorLeft)
+	}
+
 	return nil
 }
