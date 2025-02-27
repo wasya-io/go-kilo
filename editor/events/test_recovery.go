@@ -2,18 +2,32 @@ package events
 
 import "time"
 
-// TestRecoveryManager はテスト用のリカバリーマネージャーを提供する
+// TestState はテスト用の状態を表す構造体
+type TestState struct {
+	Timestamp time.Time
+	Events    []Event
+}
+
+// TestStateRecovery はテスト用の状態復元インターフェース
+type TestStateRecovery interface {
+	StateRecoveryRequester
+	GetLastRestoredState() *TestState
+	ResetTestState()
+}
+
+// TestRecoveryManager はテスト用のリカバリーマネージャー
 type TestRecoveryManager struct {
 	*RecoveryManager
 	failureCount    int
 	successCount    int
 	lastAttemptedOp BufferOperationType
+	lastState       *TestState
 }
 
 // NewTestRecoveryManager は新しいテスト用リカバリーマネージャーを作成する
-func NewTestRecoveryManager(em *EventManager, monitor *EventMonitor) *TestRecoveryManager {
+func NewTestRecoveryManager(monitor *EventMonitor) *TestRecoveryManager {
 	return &TestRecoveryManager{
-		RecoveryManager: NewRecoveryManager(em, monitor),
+		RecoveryManager: NewRecoveryManager(monitor),
 	}
 }
 
@@ -49,11 +63,22 @@ func (trm *TestRecoveryManager) ResetStats() {
 	trm.lastAttemptedOp = ""
 }
 
-// MockSnapshot はテスト用のスナップショットを作成する
-func MockSnapshot(timestamp time.Time, events []Event) RecoverySnapshot {
-	return RecoverySnapshot{
-		Timestamp: timestamp,
+// MockStateRecovery はテスト用の状態復元実装を作成する
+func (trm *TestRecoveryManager) MockStateRecovery(events []Event) *TestState {
+	state := &TestState{
+		Timestamp: time.Now(),
 		Events:    events,
-		States:    make(map[string]interface{}),
 	}
+	trm.lastState = state
+	return state
+}
+
+// GetLastRestoredState は最後に復元された状態を返す
+func (trm *TestRecoveryManager) GetLastRestoredState() *TestState {
+	return trm.lastState
+}
+
+// ResetTestState はテスト状態をリセットする
+func (trm *TestRecoveryManager) ResetTestState() {
+	trm.lastState = nil
 }

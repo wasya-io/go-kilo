@@ -18,10 +18,10 @@ func (e *RecoveryError) Error() string {
 }
 
 // NewRecoveryError は新しいRecoveryErrorを作成する
-func NewRecoveryError(err error, snapshot RecoverySnapshot, eventType EventType) *RecoveryError {
+func NewRecoveryError(err error, timestamp time.Time, eventType EventType) *RecoveryError {
 	return &RecoveryError{
 		OriginalError: err,
-		SnapshotTime:  snapshot.Timestamp,
+		SnapshotTime:  timestamp,
 		EventType:     eventType,
 		Context:       make(map[string]interface{}),
 	}

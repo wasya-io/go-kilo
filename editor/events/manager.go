@@ -42,13 +42,6 @@ func (q *UpdateQueue) Flush(handler func(Event)) {
 	}
 }
 
-// RecoverySnapshot はイベントマネージャーの状態スナップショットを表す
-type RecoverySnapshot struct {
-	Timestamp time.Time
-	Events    []Event
-	States    map[string]interface{}
-}
-
 // ErrorSeverity はエラーの重大度を表す
 type ErrorSeverity int
 
@@ -130,15 +123,13 @@ type EventManager struct {
 	batchMode          bool
 	batchEvents        []Event
 	updateQueue        *UpdateQueue
-	snapshots          []RecoverySnapshot
-	maxSnapshots       int
 	onError            func(error)
 	errorHandlers      map[EventType]func(Event, error)
 	monitor            *EventMonitor
 	recoveryManager    *RecoveryManager
 	systemEventHandler SystemEventHandler
-	processingEvents   map[EventType]int // イベント処理中のカウンター
-	maxRecursionDepth  int               // 最大再帰深度
+	processingEvents   map[EventType]int
+	maxRecursionDepth  int
 }
 
 // NewEventManager は新しいEventManagerを作成する
@@ -147,12 +138,10 @@ func NewEventManager() *EventManager {
 		subscribers:       make(map[EventType][]EventSubscriber),
 		batchEvents:       make([]Event, 0),
 		updateQueue:       NewUpdateQueue(),
-		snapshots:         make([]RecoverySnapshot, 0),
-		maxSnapshots:      10,
 		errorHandlers:     make(map[EventType]func(Event, error)),
 		monitor:           NewEventMonitor(1000),
 		processingEvents:  make(map[EventType]int),
-		maxRecursionDepth: 3, // 最大3階層まで
+		maxRecursionDepth: 3,
 	}
 }
 
@@ -204,41 +193,36 @@ func (em *EventManager) SetGlobalErrorHandler(handler func(error)) {
 	em.onError = handler
 }
 
-// CreateSnapshot は現在の状態のスナップショットを作成する
-func (em *EventManager) CreateSnapshot() {
+// SetRecoveryManager はRecoveryManagerを設定する
+func (em *EventManager) SetRecoveryManager(rm *RecoveryManager) {
 	em.mu.Lock()
 	defer em.mu.Unlock()
 
-	snapshot := RecoverySnapshot{
-		Timestamp: time.Now(),
-		Events:    make([]Event, len(em.batchEvents)),
-		States:    make(map[string]interface{}),
+	if rm == nil {
+		return // nilの場合は何もしない
 	}
-	copy(snapshot.Events, em.batchEvents)
 
-	em.snapshots = append(em.snapshots, snapshot)
-	if len(em.snapshots) > em.maxSnapshots {
-		em.snapshots = em.snapshots[1:]
-	}
-}
-
-// RecoverFromSnapshot は指定された時点のスナップショットから復元する
-func (em *EventManager) RecoverFromSnapshot(timestamp time.Time) error {
-	em.mu.Lock()
-	defer em.mu.Unlock()
-
-	for i := len(em.snapshots) - 1; i >= 0; i-- {
-		if em.snapshots[i].Timestamp.Before(timestamp) || em.snapshots[i].Timestamp.Equal(timestamp) {
-			// バッチモードで状態を復元
-			em.BeginBatch()
-			for _, event := range em.snapshots[i].Events {
-				em.Publish(event)
-			}
-			em.EndBatch()
+	em.recoveryManager = rm
+	// recoveryManagerに対してEventManagerのrecover処理を設定
+	rm.SetRecoveryCallback(func(event Event, err error) error {
+		// エラーハンドラが設定されている場合はそちらを優先
+		if handler, ok := em.errorHandlers[event.GetType()]; ok {
+			handler(event, err)
 			return nil
 		}
-	}
-	return fmt.Errorf("no snapshot found before %v", timestamp)
+		// グローバルエラーハンドラにフォールバック
+		if em.onError != nil {
+			em.onError(err)
+		}
+		return nil
+	})
+}
+
+// GetRecoveryManager はRecoveryManagerを取得する
+func (em *EventManager) GetRecoveryManager() *RecoveryManager {
+	em.mu.RLock()
+	defer em.mu.RUnlock()
+	return em.recoveryManager
 }
 
 // handleError はエラーを処理し、必要に応じて復元を試みる
@@ -270,11 +254,13 @@ func (em *EventManager) handleError(event Event, err error) {
 	em.monitor.LogError(severity, event.GetType(), structuredErr, structuredErr.Message)
 
 	// 復元を試みる
-	if recoveryErr := em.recoveryManager.AttemptRecovery(event, structuredErr); recoveryErr != nil {
-		if handler, ok := em.errorHandlers[event.GetType()]; ok {
-			handler(event, structuredErr)
-		} else if em.onError != nil {
-			em.onError(structuredErr)
+	if em.recoveryManager != nil {
+		if recoveryErr := em.recoveryManager.AttemptRecovery(event, structuredErr); recoveryErr != nil {
+			if handler, ok := em.errorHandlers[event.GetType()]; ok {
+				handler(event, structuredErr)
+			} else if em.onError != nil {
+				em.onError(structuredErr)
+			}
 		}
 	}
 }
@@ -417,6 +403,16 @@ func (em *EventManager) GetErrorStats() map[EventType]int {
 		stats[log.EventType]++
 	}
 	return stats
+}
+
+// GetCurrentEvents は現在処理中のイベントのリストを返す
+func (em *EventManager) GetCurrentEvents() []Event {
+	em.mu.RLock()
+	defer em.mu.RUnlock()
+
+	events := make([]Event, len(em.batchEvents))
+	copy(events, em.batchEvents)
+	return events
 }
 
 func (em *EventManager) processSystemEvent(event Event) {

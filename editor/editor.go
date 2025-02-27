@@ -33,6 +33,7 @@ type Editor struct {
 	logger            *logger.Logger
 	statusMessage     string
 	statusMessageTime int
+	stateManager      *EditorStateManager // 追加
 }
 
 type WinSize struct {
@@ -42,7 +43,12 @@ type WinSize struct {
 
 // New は新しいEditorインスタンスを作成する
 func New(testMode bool, eventManager *events.EventManager, buffer *Buffer, fileManager *FileManager) (*Editor, error) {
-	// TODO: 直接生成せずWinsize構造体の抽象に依存するようにする
+	// 1. 必須コンポーネントのチェック
+	if eventManager == nil || buffer == nil || fileManager == nil {
+		return nil, fmt.Errorf("required components are not initialized")
+	}
+
+	// 2. ウィンドウサイズの取得
 	var ws *unix.Winsize
 	var err error
 	if !testMode {
@@ -57,10 +63,19 @@ func New(testMode bool, eventManager *events.EventManager, buffer *Buffer, fileM
 	screenRows := int(ws.Row)
 	screenCols := int(ws.Col)
 
+	// 3. 基本設定の読み込み
 	config := LoadConfig()
 
+	// 4. UIコンポーネントの初期化
+	ui := NewUI(screenRows, screenCols, eventManager)
+
+	// 5. Input Handlerの初期化
+	keyReader := NewStandardKeyReader()
+	inputParser := NewStandardInputParser()
+
+	// 6. Editorインスタンスの作成
 	e := &Editor{
-		ui:               NewUI(screenRows, screenCols, eventManager), // eventManagerを追加
+		ui:               ui,
 		quit:             make(chan struct{}),
 		buffer:           buffer,
 		config:           config,
@@ -72,14 +87,11 @@ func New(testMode bool, eventManager *events.EventManager, buffer *Buffer, fileM
 		fileManager:      fileManager,
 	}
 
-	keyReader := NewStandardKeyReader()
-	inputParser := NewStandardInputParser()
-	e.input = NewInputHandler(e, eventManager, keyReader, inputParser) // TODO: inputHandlerがEditorに依存していて注入できない
-
-	// イベントハンドラの登録
-	e.setupEventHandlers()
+	// 7. Input Handlerの設定
+	e.input = NewInputHandler(e, eventManager, keyReader, inputParser)
 
 	if !testMode {
+		// 8. 初期コンテンツの設定
 		defaultContent := []string{
 			"Hello, Go-Kilo editor!",
 			"Use arrow keys to move cursor.",
@@ -87,6 +99,7 @@ func New(testMode bool, eventManager *events.EventManager, buffer *Buffer, fileM
 		}
 		e.buffer.LoadContent(defaultContent)
 
+		// 9. ターミナルの設定
 		term, err := enableRawMode()
 		if err != nil {
 			return nil, err
@@ -94,37 +107,47 @@ func New(testMode bool, eventManager *events.EventManager, buffer *Buffer, fileM
 		e.term = term
 		e.termState = term
 
-		// パニックリカバリーとクリーンアップの設定
-		// TODO: main.goと似たようなことを行なっている->ここでもリカバリや終了シグナル待ちを行なっているのでgoroutineリークしているのでは？
-		go func() {
-			defer func() {
-				if r := recover(); r != nil {
-					// パニック時の端末状態復元を保証
-					e.Cleanup()
-					// スタックトレースとエラー情報を出力
-					fmt.Fprintf(os.Stderr, "Editor panic: %v\n", r)
-					debug.PrintStack()
-					os.Exit(1)
-				}
-			}()
-
-			// シグナル処理
-			sigChan := make(chan os.Signal, 1)
-			signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-			select {
-			case <-sigChan:
-				e.Cleanup()
-				os.Exit(0)
-			case <-e.cleanupChan:
-				return
-			}
-		}()
+		// 10. クリーンアップハンドラの設定
+		go e.setupCleanupHandler()
 	}
 
-	// システムイベントハンドラの登録
-	e.eventManager.RegisterSystemEventHandler(events.NewDefaultSystemEventHandler(e, fileManager))
+	// 11. システムイベントハンドラの登録
+	eventManager.RegisterSystemEventHandler(e)
 
 	return e, nil
+}
+
+// SetStateManager はStateManagerを設定する
+func (e *Editor) SetStateManager(manager *EditorStateManager) {
+	if manager == nil {
+		panic("state manager cannot be nil")
+	}
+	e.stateManager = manager
+}
+
+// setupCleanupHandler はクリーンアップハンドラをセットアップする
+func (e *Editor) setupCleanupHandler() {
+	defer func() {
+		if r := recover(); r != nil {
+			// パニック時の端末状態復元を保証
+			e.Cleanup()
+			// スタックトレースとエラー情報を出力
+			fmt.Fprintf(os.Stderr, "Editor panic: %v\n", r)
+			debug.PrintStack()
+			os.Exit(1)
+		}
+	}()
+
+	// シグナル処理
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	select {
+	case <-sigChan:
+		e.Cleanup()
+		os.Exit(0)
+	case <-e.cleanupChan:
+		return
+	}
 }
 
 // setupRecoveryHandlers はリカバリーハンドラを設定する
@@ -144,7 +167,7 @@ func (e *Editor) setupRecoveryHandlers() {
 		stack := debug.Stack()
 		e.setStatusMessage("Critical error: %v", err)
 
-		// スタックトレースとエラー情報を一時ファイルに保存
+		// スタックトレースとエラー情報をログとして保存
 		timestamp := time.Now().Format("20060102-150405")
 		errorFile := fmt.Sprintf("error-%s.log", timestamp)
 		content := []string{
@@ -163,7 +186,7 @@ func (e *Editor) setupRecoveryHandlers() {
 
 // handlePanic はパニックから復帰を試みる
 func (e *Editor) handlePanic(r interface{}) {
-	// パニック情報を記録
+	// 1. パニック情報のログ記録
 	stack := debug.Stack()
 	timestamp := time.Now().Format("20060102-150405")
 	crashFile := fmt.Sprintf("crash-%s.log", timestamp)
@@ -174,56 +197,75 @@ func (e *Editor) handlePanic(r interface{}) {
 	}
 	e.fileManager.SaveFile(crashFile, content)
 
-	// バッファの保存を試みる
+	// 2. バッファの保存を試みる
 	if e.buffer != nil && e.buffer.IsDirty() {
 		e.saveBufferToTempFile()
 	}
 
-	// 最後の安定状態への復帰を試みる
-	if err := e.RecoverFromLatestSnapshot(); err != nil {
-		e.setStatusMessage("Failed to recover: %v", err)
-		return
-	}
-
+	// 3. エラー状態の記録
 	e.setStatusMessage("Recovered from panic. Crash log saved to %s", crashFile)
+
+	// 4. 状態の復元を試みる
+	if e.stateManager != nil {
+		if err := e.stateManager.RecoverFromSnapshot(time.Now()); err != nil {
+			// 復元に失敗した場合はエラーを記録するのみ
+			e.logger.Log("error", fmt.Sprintf("Failed to recover state: %v", err))
+		}
+	}
 }
 
 // setupEventHandlers はイベントハンドラを設定する
 func (e *Editor) setupEventHandlers() {
-	// リカバリーハンドラを設定
+	// 1. コンポーネントの存在チェック
+	if e.eventManager == nil {
+		panic("event manager is not initialized")
+	}
+	if e.buffer == nil {
+		panic("buffer is not initialized")
+	}
+	if e.stateManager == nil {
+		panic("state manager is not initialized")
+	}
+
+	// 2. リカバリーハンドラを設定
+	defer func() {
+		if r := recover(); r != nil {
+			panic(fmt.Sprintf("failed to setup event handlers: %v", r))
+		}
+	}()
+
 	e.setupRecoveryHandlers()
 
-	// バッファイベントのハンドラを登録
+	// 3. バッファイベントのハンドラを登録
 	e.eventManager.Subscribe(events.BufferEventType, func(event events.Event) {
 		if bufferEvent, ok := event.(*events.BufferEvent); ok {
 			e.handleBufferEvent(bufferEvent)
 		}
 	})
 
-	// UIイベントのハンドラを登録
+	// 4. UIイベントのハンドラを登録
 	e.eventManager.Subscribe(events.UIEventType, func(event events.Event) {
 		if uiEvent, ok := event.(*events.UIEvent); ok {
 			e.handleUIEvent(uiEvent)
 		}
 	})
 
-	// ファイルイベントのハンドラを登録
+	// 5. ファイルイベントのハンドラを登録
 	e.eventManager.Subscribe(events.FileEventType, func(event events.Event) {
 		if fileEvent, ok := event.(*events.FileEvent); ok {
 			e.handleFileEvent(fileEvent)
 		}
 	})
 
-	// エラーハンドラの設定
+	// 6. エラーハンドラの設定
 	e.eventManager.SetGlobalErrorHandler(func(err error) {
 		e.setStatusMessage("Error: %v", err)
-		// 自動保存を試行
 		if e.buffer != nil && e.buffer.IsDirty() {
 			e.saveBufferToTempFile()
 		}
 	})
 
-	// バッファイベントのエラーハンドラ
+	// 7. バッファイベントのエラーハンドラ
 	e.eventManager.SetErrorHandler(events.BufferEventType, func(event events.Event, err error) {
 		if bufferEvent, ok := event.(*events.BufferEvent); ok {
 			// 前回の状態に復帰を試みる
@@ -233,11 +275,11 @@ func (e *Editor) setupEventHandlers() {
 		}
 	})
 
-	// 定期的なスナップショット作成
-	go e.periodicSnapshot()
-
-	// エラー統計の定期チェック
-	go e.monitorErrors()
+	// 8. 状態管理の定期タスク設定
+	if !e.isQuitting {
+		go e.periodicSnapshot()
+		go e.monitorErrors()
+	}
 }
 
 // handleBufferEvent はバッファイベントを処理する
@@ -667,7 +709,7 @@ func (e *Editor) periodicSnapshot() {
 		select {
 		case <-ticker.C:
 			if e.buffer != nil && e.buffer.IsDirty() {
-				e.eventManager.CreateSnapshot()
+				e.stateManager.CreateSnapshot(e.eventManager.GetCurrentEvents())
 			}
 		case <-e.quit:
 			return
@@ -691,7 +733,7 @@ func (e *Editor) saveBufferToTempFile() {
 
 // RecoverFromLatestSnapshot は最新のスナップショットから復元を試みる
 func (e *Editor) RecoverFromLatestSnapshot() error {
-	return e.eventManager.RecoverFromSnapshot(time.Now())
+	return e.stateManager.RecoverFromSnapshot(time.Now())
 }
 
 // monitorErrors はエラー統計を定期的にチェックする
@@ -745,4 +787,62 @@ func (e *Editor) GetEventManager() *events.EventManager {
 // GetFilename は現在のファイル名を返す
 func (e *Editor) GetFilename() string {
 	return e.fileManager.GetFilename()
+}
+
+// HandleSaveEvent はSaveEventを処理する
+func (e *Editor) HandleSaveEvent(event *events.SaveEvent) error {
+	return e.fileManager.HandleSaveRequest(event)
+}
+
+// HandleQuitEvent はQuitEventを処理する
+func (e *Editor) HandleQuitEvent(event *events.QuitEvent) error {
+	if e.buffer.IsDirty() && !event.Force {
+		event.SaveNeeded = true
+		return fmt.Errorf("unsaved changes")
+	}
+	e.isQuitting = true
+	close(e.quit)
+	return nil
+}
+
+// HandleStatusEvent はStatusEventを処理する
+func (e *Editor) HandleStatusEvent(event *events.StatusEvent) error {
+	e.SetStatusMessage(event.Message, event.Args...)
+	return nil
+}
+
+// setupStartupHandlers はエディタの起動時の初期設定を行う
+func (e *Editor) setupStartupHandlers() error {
+	// 1. 必須コンポーネントの検証
+	if err := e.validateComponents(); err != nil {
+		return fmt.Errorf("component validation failed: %w", err)
+	}
+
+	// 2. リカバリー設定の初期化
+	// e.recoveryManager.SetStrategy(events.RollbackToStable)
+
+	// 3. 定期タスクの開始（エディタが終了していない場合のみ）
+	if !e.isQuitting {
+		go e.periodicSnapshot()
+		go e.monitorErrors()
+	}
+
+	return nil
+}
+
+// validateComponents は必須コンポーネントの存在を検証する
+func (e *Editor) validateComponents() error {
+	if e.eventManager == nil {
+		return fmt.Errorf("event manager is not initialized")
+	}
+	// if e.recoveryManager == nil {
+	// 	return fmt.Errorf("recovery manager is not initialized")
+	// }
+	if e.stateManager == nil {
+		return fmt.Errorf("state manager is not initialized")
+	}
+	if e.buffer == nil {
+		return fmt.Errorf("buffer is not initialized")
+	}
+	return nil
 }
