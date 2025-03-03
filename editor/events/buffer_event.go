@@ -1,5 +1,11 @@
 package events
 
+import (
+	"encoding/json"
+	"errors"
+	"time"
+)
+
 // BufferOperationType はバッファ操作の種類を表す
 type BufferOperationType string
 
@@ -30,11 +36,16 @@ const (
 )
 
 // BufferEventSubType はバッファイベントのサブタイプを表す
-type BufferEventSubType int
+type BufferEventSubType string
 
 const (
-	BufferContentChanged BufferEventSubType = iota
-	BufferStructuralChange
+	BufferEventModify      BufferEventSubType = "modify"
+	BufferEventSetState    BufferEventSubType = "set_state"
+	BufferEventInsert      BufferEventSubType = "insert"
+	BufferEventDelete      BufferEventSubType = "delete"
+	BufferEventClear       BufferEventSubType = "clear"
+	BufferContentChanged   BufferEventSubType = "content_changed"
+	BufferStructuralChange BufferEventSubType = "structural_change"
 )
 
 // BufferChangeData はバッファの変更情報を保持する
@@ -78,10 +89,14 @@ type BufferEvent struct {
 // NewBufferEvent は新しいBufferEventを作成する
 func NewBufferEvent(subType BufferEventSubType, data interface{}) *BufferEvent {
 	return &BufferEvent{
-		BaseEvent: BaseEvent{Type: BufferEventType},
-		SubType:   subType,
-		Data:      data,
-		changes:   make([]BufferChangeData, 0),
+		BaseEvent: BaseEvent{
+			Type:     BufferEventType,
+			Time:     time.Now(),
+			Priority: MediumPriority,
+		},
+		SubType: subType,
+		Data:    data,
+		changes: make([]BufferChangeData, 0),
 	}
 }
 
@@ -115,29 +130,94 @@ func NewBufferChangeEvent(op BufferOperationType, pos Position, data interface{}
 
 // SetStates はバッファの状態を設定する
 func (e *BufferEvent) SetStates(prev, curr BufferState) {
-	e.prevState = prev
-	e.currState = curr
+	// 状態をディープコピー
+	e.prevState = BufferState{
+		Content: prev.Content,
+		IsDirty: prev.IsDirty,
+		Lines:   append([]string(nil), prev.Lines...),
+	}
+	e.currState = BufferState{
+		Content: curr.Content,
+		IsDirty: curr.IsDirty,
+		Lines:   append([]string(nil), curr.Lines...),
+	}
 
-	// 状態の変更から影響を受けた行を特定
-	if prev.Content != curr.Content {
-		change := BufferChangeData{
+	// 状態の変更を分析
+	var change BufferChangeData
+	switch e.SubType {
+	case BufferEventSetState:
+		// 完全な状態の置き換え
+		change = BufferChangeData{
+			ChangeType:   MultiLineEdit,
+			IsStructural: true,
+			StartLine:    0,
+			EndLine:      len(curr.Lines) - 1,
+		}
+	case BufferEventModify, BufferContentChanged:
+		// 内容の変更
+		change = BufferChangeData{
 			ChangeType:   SingleLineEdit,
 			IsStructural: false,
 		}
 		if len(curr.Lines) > 0 {
-			change.AffectedLines = []int{0} // とりあえず最初の行を影響された行とする
+			change.StartLine = 0
+			change.EndLine = 0
 		}
-		e.AddChange(change)
 	}
+
+	// 変更された行を特定
+	if len(curr.Lines) > 0 || len(prev.Lines) > 0 {
+		changedLines := make([]int, 0)
+		maxLen := max(len(prev.Lines), len(curr.Lines))
+
+		for i := 0; i < maxLen; i++ {
+			var prevLine, currLine string
+			if i < len(prev.Lines) {
+				prevLine = prev.Lines[i]
+			}
+			if i < len(curr.Lines) {
+				currLine = curr.Lines[i]
+			}
+			if prevLine != currLine {
+				changedLines = append(changedLines, i)
+			}
+		}
+
+		if len(changedLines) > 0 {
+			change.AffectedLines = changedLines
+			change.StartLine = changedLines[0]
+			change.EndLine = changedLines[len(changedLines)-1]
+		}
+
+		// 構造的な変更の検出
+		if len(prev.Lines) != len(curr.Lines) {
+			change.IsStructural = true
+			if len(curr.Lines) > len(prev.Lines) {
+				change.ChangeType = LineInsert
+			} else {
+				change.ChangeType = LineDelete
+			}
+		}
+	}
+
+	e.changes = []BufferChangeData{change}
+}
+
+// max は2つの整数の大きい方を返す
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 // determineSubType は操作タイプからサブタイプを決定する
 func determineSubType(op BufferOperationType) BufferEventSubType {
 	switch op {
 	case BufferNewLine, BufferRangeModified:
-		return BufferStructuralChange
+		return BufferEventSetState
 	default:
-		return BufferContentChanged
+		return BufferEventModify
 	}
 }
 
@@ -230,4 +310,62 @@ func compareStringSlices(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// BufferEventJSON はBufferEventのJSONシリアライズ用の構造体
+type BufferEventJSON struct {
+	Type      EventType              `json:"type"`
+	Time      time.Time              `json:"time"`
+	Priority  int                    `json:"priority"`
+	Error     string                 `json:"error,omitempty"`
+	State     map[string]interface{} `json:"state,omitempty"`
+	SubType   BufferEventSubType     `json:"sub_type"`
+	Data      interface{}            `json:"data"`
+	Changes   []BufferChangeData     `json:"changes"`
+	PrevState BufferState            `json:"prev_state"`
+	CurrState BufferState            `json:"curr_state"`
+}
+
+// MarshalJSON はBufferEventをJSONに変換する
+func (e *BufferEvent) MarshalJSON() ([]byte, error) {
+	var errorStr string
+	if e.Error != nil {
+		errorStr = e.Error.Error()
+	}
+
+	return json.Marshal(BufferEventJSON{
+		Type:      e.Type,
+		Time:      e.Time,
+		Priority:  e.Priority,
+		Error:     errorStr,
+		State:     e.State,
+		SubType:   e.SubType,
+		Data:      e.Data,
+		Changes:   e.changes,
+		PrevState: e.prevState,
+		CurrState: e.currState,
+	})
+}
+
+// UnmarshalJSON はJSONからBufferEventを復元する
+func (e *BufferEvent) UnmarshalJSON(data []byte) error {
+	var jsonEvent BufferEventJSON
+	if err := json.Unmarshal(data, &jsonEvent); err != nil {
+		return err
+	}
+
+	e.Type = jsonEvent.Type
+	e.Time = jsonEvent.Time
+	e.Priority = jsonEvent.Priority
+	if jsonEvent.Error != "" {
+		e.Error = errors.New(jsonEvent.Error)
+	}
+	e.State = jsonEvent.State
+	e.SubType = jsonEvent.SubType
+	e.Data = jsonEvent.Data
+	e.changes = jsonEvent.Changes
+	e.prevState = jsonEvent.PrevState
+	e.currState = jsonEvent.CurrState
+
+	return nil
 }

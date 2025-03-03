@@ -122,6 +122,7 @@ type EventManager struct {
 	mu                 sync.RWMutex
 	batchMode          bool
 	batchEvents        []Event
+	processedEvents    []Event // 新しいフィールド：処理済みイベントを保持
 	updateQueue        *UpdateQueue
 	onError            func(error)
 	errorHandlers      map[EventType]func(Event, error)
@@ -137,6 +138,7 @@ func NewEventManager() *EventManager {
 	return &EventManager{
 		subscribers:       make(map[EventType][]EventSubscriber),
 		batchEvents:       make([]Event, 0),
+		processedEvents:   make([]Event, 0), // 初期化
 		updateQueue:       NewUpdateQueue(),
 		errorHandlers:     make(map[EventType]func(Event, error)),
 		monitor:           NewEventMonitor(1000),
@@ -300,6 +302,9 @@ func (em *EventManager) Publish(event Event) error {
 	em.mu.RLock()
 	defer em.mu.RUnlock()
 
+	// イベントを処理済みリストに追加
+	em.processedEvents = append(em.processedEvents, event)
+
 	// イベントループ検出
 	if depth := em.processingEvents[event.GetType()]; depth >= em.maxRecursionDepth {
 		em.monitor.LogError(SeverityWarning, event.GetType(), fmt.Errorf("event loop detected"),
@@ -348,13 +353,14 @@ func (em *EventManager) BeginBatch() {
 	em.mu.Lock()
 	defer em.mu.Unlock()
 	em.batchMode = true
+	// バッチ開始時のイベントカウントを記録
+	em.batchEvents = em.batchEvents[:0]
 }
 
 // EndBatch はバッチモードを終了し、蓄積されたイベントを発行する
 func (em *EventManager) EndBatch() {
 	em.mu.Lock()
 	defer em.mu.Unlock()
-
 	em.batchMode = false
 
 	// バッファイベントを優先して処理
@@ -363,7 +369,6 @@ func (em *EventManager) EndBatch() {
 			em.updateQueue.Add(event)
 		}
 	}
-
 	// その他のイベントを処理
 	for _, event := range em.batchEvents {
 		if event.GetType() != BufferEventType {
@@ -371,6 +376,8 @@ func (em *EventManager) EndBatch() {
 		}
 	}
 
+	// 処理済みイベントリストにバッチイベントを追加
+	em.processedEvents = append(em.processedEvents, em.batchEvents...)
 	em.batchEvents = em.batchEvents[:0]
 
 	// 更新キューを処理
@@ -384,6 +391,8 @@ func (em *EventManager) publishEvent(event Event) {
 			subscriber(event)
 		}
 	}
+	// イベントを処理済みリストに追加
+	em.processedEvents = append(em.processedEvents, event)
 }
 
 // ClearBatch はバッチモードをキャンセルし、蓄積されたイベントをクリアする
@@ -405,14 +414,23 @@ func (em *EventManager) GetErrorStats() map[EventType]int {
 	return stats
 }
 
-// GetCurrentEvents は現在処理中のイベントのリストを返す
+// GetCurrentEvents は現在までに処理されたすべてのイベントのリストを返す
 func (em *EventManager) GetCurrentEvents() []Event {
 	em.mu.RLock()
 	defer em.mu.RUnlock()
 
-	events := make([]Event, len(em.batchEvents))
-	copy(events, em.batchEvents)
+	// 処理済みイベントをコピー
+	events := make([]Event, len(em.processedEvents))
+	copy(events, em.processedEvents)
+
 	return events
+}
+
+// ClearEvents は処理済みイベントをクリアする
+func (em *EventManager) ClearEvents() {
+	em.mu.Lock()
+	defer em.mu.Unlock()
+	em.processedEvents = em.processedEvents[:0]
 }
 
 func (em *EventManager) processSystemEvent(event Event) {

@@ -255,27 +255,107 @@ func (b *Buffer) SetDirty(dirty bool) {
 
 // getCurrentState は現在のバッファ状態を取得する
 func (b *Buffer) getCurrentState() events.BufferState {
-	var content string
-	var lines []string
-	if len(b.content) > 0 {
-		content = b.content[0]
-		lines = b.content[:1] // 最初の行のみを含める
-	}
-	return events.BufferState{
-		Content: content,
+	// 完全な状態をコピーして返す
+	state := events.BufferState{
+		Content: "",
 		IsDirty: b.isDirty,
-		Lines:   lines,
+		Lines:   make([]string, len(b.content)),
 	}
+
+	// 内容をコピー
+	if len(b.content) > 0 {
+		state.Content = b.content[0] // 最初の行を Content フィールドに設定
+		copy(state.Lines, b.content) // すべての行を Lines フィールドにコピー
+	}
+
+	return state
 }
 
 // RestoreState は以前の状態にバッファを復元する
 func (b *Buffer) RestoreState(state interface{}) error {
+	fmt.Printf("Debug: Buffer.RestoreState called with state type: %T\n", state)
+
 	if bufferState, ok := state.(events.BufferState); ok {
-		b.content = bufferState.Lines
+		fmt.Printf("Debug: Restoring buffer state: Content=%q, IsDirty=%v, Lines=%v\n",
+			bufferState.Content, bufferState.IsDirty, bufferState.Lines)
+
+		// イベントマネージャを一時的に保存して無効化
+		tempManager := b.eventManager
+		b.eventManager = nil
+
+		// バッファを完全にクリア
+		b.content = []string{""}
+		b.rowCache = make(map[int]*Row)
+		b.isDirty = false
+
+		// 新しい状態を直接設定
+		if len(bufferState.Lines) > 0 {
+			b.content = make([]string, len(bufferState.Lines))
+			copy(b.content, bufferState.Lines)
+		} else if bufferState.Content != "" {
+			b.content = []string{bufferState.Content}
+		}
+
+		// 行キャッシュを再構築
+		b.rowCache = make(map[int]*Row)
+		for i := range b.content {
+			b.getRow(i)
+		}
+
+		// ダーティフラグを設定
 		b.isDirty = bufferState.IsDirty
+
+		// イベントマネージャを復元し、状態変更イベントを発行
+		b.eventManager = tempManager
+		if b.eventManager != nil {
+			prevState := events.BufferState{Content: "", IsDirty: false, Lines: []string{""}}
+			b.publishBufferEvent(events.BufferEventSetState, events.Position{}, bufferState, prevState)
+		}
+
+		fmt.Printf("Debug: Buffer state restored. Final content: %q\n", b.content)
 		return nil
 	}
-	return fmt.Errorf("invalid state type for buffer restoration")
+	return fmt.Errorf("invalid state type for buffer restoration: %T", state)
+}
+
+// resetToCleanState はバッファを初期状態にリセットする
+func (b *Buffer) resetToCleanState() error {
+	// 現在の状態を保存
+	prevState := b.getCurrentState()
+
+	// バッファを完全にリセット
+	b.content = []string{""}
+	b.rowCache = make(map[int]*Row)
+	b.isDirty = false
+
+	// リセットイベントを発行
+	if b.eventManager != nil {
+		b.publishBufferEvent(events.BufferEventSetState,
+			events.Position{}, nil, prevState)
+	}
+
+	return nil
+}
+
+// compareBufferStates は2つのバッファ状態を比較する
+func compareBufferStates(a, b events.BufferState) bool {
+	if a.Content != b.Content || a.IsDirty != b.IsDirty {
+		return false
+	}
+	return compareStringSlices(a.Lines, b.Lines)
+}
+
+// compareStringSlices は2つの文字列スライスを比較する
+func compareStringSlices(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // publishBufferEvent はバッファイベントを発行する
@@ -284,20 +364,49 @@ func (b *Buffer) publishBufferEvent(eventType events.BufferEventSubType, editPos
 		return
 	}
 
+	// 現在の状態を取得
 	currentState := b.getCurrentState()
-	event := events.NewBufferEvent(eventType, data)
-	event.SetStates(prevState, currentState)
+	fmt.Printf("Debug: Publishing buffer event: type=%v, prevState=%+v, currentState=%+v\n",
+		eventType, prevState, currentState)
 
-	// 編集位置の情報をBufferChangeDataに設定
-	if editPos.Y >= 0 && editPos.Y < len(b.content) {
-		change := events.BufferChangeData{
-			StartLine: editPos.Y,
-			EndLine:   editPos.Y,
+	// イベントを生成
+	event := events.NewBufferEvent(eventType, data)
+
+	// イベントの種類に応じた処理
+	switch eventType {
+	case events.BufferEventSetState:
+		if data != nil {
+			if newState, ok := data.(events.BufferState); ok {
+				// まずイベントの状態を設定
+				event.SetStates(prevState, newState)
+
+				// その後でバッファの状態を更新
+				if len(newState.Lines) > 0 {
+					b.content = make([]string, len(newState.Lines))
+					copy(b.content, newState.Lines)
+				} else if newState.Content != "" {
+					b.content = []string{newState.Content}
+				} else {
+					b.content = []string{""}
+				}
+				b.rowCache = make(map[int]*Row)
+				b.isDirty = newState.IsDirty
+			}
 		}
-		event.AddChange(change)
+
+	case events.BufferStructuralChange:
+		event.SetStates(prevState, currentState)
+
+	default:
+		event.SetStates(prevState, currentState)
 	}
 
+	// イベントを発行
+	b.eventManager.BeginBatch()
 	b.eventManager.Publish(event)
+	b.eventManager.EndBatch()
+
+	fmt.Printf("Debug: After event publish: content=%q\n", b.content)
 }
 
 // publishPartialRefreshEvent は部分更新イベントを発行する
@@ -475,7 +584,6 @@ func (r *Row) DeleteChar(at int) {
 	if at < 0 || at >= len(r.runeSlice) {
 		return
 	}
-
 	r.runeSlice = append(r.runeSlice[:at], r.runeSlice[at+1:]...)
 	r.chars = string(r.runeSlice)
 	r.updateWidths()
