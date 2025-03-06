@@ -5,6 +5,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/wasya-io/go-kilo/app/boundary/provider/input"
+	"github.com/wasya-io/go-kilo/app/boundary/reader"
+	"github.com/wasya-io/go-kilo/app/entity/key"
+	"github.com/wasya-io/go-kilo/app/usecase/parser"
 	"github.com/wasya-io/go-kilo/editor"
 	"github.com/wasya-io/go-kilo/editor/events"
 )
@@ -27,7 +31,13 @@ func setupTestEditor(t *testing.T) *editor.Editor {
 	eventManager := events.NewEventManager()
 	buffer := editor.NewBuffer(eventManager)
 	fileManager := editor.NewFileManager(buffer, eventManager)
-	ed, err := editor.New(true, eventManager, buffer, fileManager)
+
+	// TODO: モック用のインプットプロバイダを作る
+	parser := parser.NewStandardInputParser()
+	reader := reader.NewStandardKeyReader()
+	inputProvider := input.NewStandardInputProvider(reader, parser)
+
+	ed, err := editor.New(true, eventManager, buffer, fileManager, inputProvider)
 	if err != nil {
 		t.Fatalf("エディタの初期化に失敗しました: %v", err)
 	}
@@ -367,19 +377,19 @@ func TestDelete(t *testing.T) {
 
 func TestEditorKeyInput(t *testing.T) {
 	// テストケース用のキーイベントを準備
-	events := []editor.KeyEvent{
-		{Type: editor.KeyEventChar, Rune: 'H'},
-		{Type: editor.KeyEventChar, Rune: 'i'},
-		{Type: editor.KeyEventSpecial, Key: editor.KeyEnter},
-		{Type: editor.KeyEventChar, Rune: '!'},
+	events := []key.KeyEvent{
+		{Type: key.KeyEventChar, Rune: 'H'},
+		{Type: key.KeyEventChar, Rune: 'i'},
+		{Type: key.KeyEventSpecial, Key: key.KeyEnter},
+		{Type: key.KeyEventChar, Rune: '!'},
 	}
 
 	// MockKeyReaderを使用してエディタを初期化
 	e := setupTestEditor(t)
 
 	// TODO: mockReaderを注入すればSetKeyReaderが不要になる
-	mockReader := editor.NewMockKeyReader(events)
-	e.SetKeyReader(mockReader)
+	// mockReader := editor.NewMockKeyReader(events)
+	// e.SetKeyReader(mockReader)
 
 	// キー入力をシミュレート
 	for i := 0; i < len(events); i++ {
@@ -489,13 +499,13 @@ func TestEscapeSequence(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		input    []editor.KeyEvent
+		input    []key.KeyEvent
 		wantFunc func(*testing.T, *editor.Editor)
 	}{
 		{
 			name: "ESCキー単体",
-			input: []editor.KeyEvent{
-				{Type: editor.KeyEventSpecial, Key: editor.KeyEsc},
+			input: []key.KeyEvent{
+				{Type: key.KeyEventSpecial, Key: key.KeyEsc},
 			},
 			wantFunc: func(t *testing.T, e *editor.Editor) {
 				// ESCキーは特に状態を変更しないので、
@@ -507,9 +517,9 @@ func TestEscapeSequence(t *testing.T) {
 		},
 		{
 			name: "矢印キー（エスケープシーケンス）",
-			input: []editor.KeyEvent{
-				{Type: editor.KeyEventSpecial, Key: editor.KeyArrowRight},
-				{Type: editor.KeyEventSpecial, Key: editor.KeyArrowLeft},
+			input: []key.KeyEvent{
+				{Type: key.KeyEventSpecial, Key: key.KeyArrowRight},
+				{Type: key.KeyEventSpecial, Key: key.KeyArrowLeft},
 			},
 			wantFunc: func(t *testing.T, e *editor.Editor) {
 				// カーソルが元の位置に戻っていることを確認
@@ -524,8 +534,8 @@ func TestEscapeSequence(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// テスト用のキーリーダーを設定
-			mockReader := editor.NewMockKeyReader(tt.input)
-			ed.SetKeyReader(mockReader)
+			// mockReader := editor.NewMockKeyReader(tt.input)
+			// ed.SetKeyReader(mockReader)
 
 			// 各キー入力を処理
 			for range tt.input {
@@ -554,14 +564,14 @@ func TestTabHandling(t *testing.T) {
 	}
 
 	// Create test events
-	events := []editor.KeyEvent{
-		{Type: editor.KeyEventSpecial, Key: editor.KeyTab},
-		{Type: editor.KeyEventChar, Rune: 'a'},
+	events := []key.KeyEvent{
+		{Type: key.KeyEventSpecial, Key: key.KeyTab},
+		{Type: key.KeyEventChar, Rune: 'a'},
 	}
 
 	// Set up mock key reader
-	mockReader := editor.NewMockKeyReader(events)
-	ed.SetKeyReader(mockReader)
+	// mockReader := editor.NewMockKeyReader(events)
+	// ed.SetKeyReader(mockReader)
 
 	// Process key events
 	for range events {
@@ -654,11 +664,11 @@ func TestShiftTabHandling(t *testing.T) {
 			}
 
 			// Create mock key event for Shift+Tab
-			events := []editor.KeyEvent{
-				{Type: editor.KeyEventSpecial, Key: editor.KeyShiftTab},
-			}
-			mockReader := editor.NewMockKeyReader(events)
-			ed.SetKeyReader(mockReader)
+			// events := []editor.KeyEvent{
+			// 	{Type: editor.KeyEventSpecial, Key: editor.KeyShiftTab},
+			// }
+			// mockReader := editor.NewMockKeyReader(events)
+			// ed.SetKeyReader(mockReader)
 
 			// Process Shift+Tab key event
 			if err := ed.ProcessKeypress(); err != nil {

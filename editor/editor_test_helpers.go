@@ -8,9 +8,9 @@ import (
 )
 
 // KeyReader はキー入力を読み取るインターフェース
-type KeyReader interface {
-	ReadKey() (KeyEvent, []KeyEvent, error)
-}
+// type KeyReader interface {
+// 	ReadKey() (KeyEvent, []KeyEvent, error)
+// }
 
 // CursorMovement はカーソル移動の種類を表す型
 type CursorMovement byte
@@ -35,7 +35,7 @@ type EditorTestHelper interface {
 	GetContentForTest(lineNum int) string
 	GetCharAtCursor() string
 	GetLineCount() int
-	SetKeyReader(reader KeyReader)
+	// SetKeyReader(reader KeyReader)
 	IsDirty() bool
 	SetDirty(bool)
 	UpdateScroll()
@@ -52,11 +52,11 @@ func (e *Editor) GetRows() []string {
 }
 
 // SetKeyReader はキー入力読み取りインターフェースを設定する
-func (e *Editor) SetKeyReader(reader KeyReader) {
-	if e.input != nil {
-		e.input.keyReader = reader
-	}
-}
+// func (e *Editor) SetKeyReader(reader KeyReader) {
+// 	if e.input != nil {
+// 		e.input.keyReader = reader
+// 	}
+// }
 
 // TestInput はテスト用に1文字入力をシミュレートする
 func (e *Editor) TestInput(ch rune) error {
@@ -237,35 +237,35 @@ func (ms *MockStorage) GetSavedContent(filename string) []string {
 	return nil
 }
 
-// MockKeyReader はテスト用のキー入力シミュレータ
-type MockKeyReader struct {
-	events []KeyEvent
-	index  int
-}
+// // MockKeyReader はテスト用のキー入力シミュレータ
+// type MockKeyReader struct {
+// 	events []KeyEvent
+// 	index  int
+// }
 
 // NewMockKeyReader は一連のキーイベントをシミュレートするMockKeyReaderを作成する
-func NewMockKeyReader(events []KeyEvent) *MockKeyReader {
-	return &MockKeyReader{
-		events: events,
-		index:  0,
-	}
-}
+// func NewMockKeyReader(events []KeyEvent) *MockKeyReader {
+// 	return &MockKeyReader{
+// 		events: events,
+// 		index:  0,
+// 	}
+// }
 
-// ReadKey は事前に設定されたキーイベントを順番に返す
-func (m *MockKeyReader) ReadKey() (KeyEvent, []KeyEvent, error) {
-	if m.index >= len(m.events) {
-		return KeyEvent{}, nil, fmt.Errorf("no more events")
-	}
+// // ReadKey は事前に設定されたキーイベントを順番に返す
+// func (m *MockKeyReader) ReadKey() (KeyEvent, []KeyEvent, error) {
+// 	if m.index >= len(m.events) {
+// 		return KeyEvent{}, nil, fmt.Errorf("no more events")
+// 	}
 
-	event := m.events[m.index]
-	m.index++
-	return event, nil, nil
-}
+// 	event := m.events[m.index]
+// 	m.index++
+// 	return event, nil, nil
+// }
 
-// ResetIndex はイベントインデックスをリセットする
-func (m *MockKeyReader) ResetIndex() {
-	m.index = 0
-}
+// // ResetIndex はイベントインデックスをリセットする
+// func (m *MockKeyReader) ResetIndex() {
+// 	m.index = 0
+// }
 
 // TestEditorOperations はテスト用のEditorOperations実装
 type TestEditorOperations struct {

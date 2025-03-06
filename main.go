@@ -7,6 +7,9 @@ import (
 	"runtime/debug"
 	"syscall"
 
+	"github.com/wasya-io/go-kilo/app/boundary/provider/input"
+	"github.com/wasya-io/go-kilo/app/boundary/reader"
+	"github.com/wasya-io/go-kilo/app/usecase/parser"
 	"github.com/wasya-io/go-kilo/editor"
 	"github.com/wasya-io/go-kilo/editor/events"
 )
@@ -37,7 +40,12 @@ func main() {
 	buffer := editor.NewBuffer(eventManager)
 	fileManager := editor.NewFileManager(buffer, eventManager)
 
-	ed, err := editor.New(false, eventManager, buffer, fileManager)
+	// インプットプロバイダの初期化
+	parser := parser.NewStandardInputParser()
+	reader := reader.NewStandardKeyReader()
+	inputProvider := input.NewStandardInputProvider(reader, parser)
+
+	ed, err := editor.New(false, eventManager, buffer, fileManager, inputProvider)
 	if err != nil {
 		die(err)
 	}

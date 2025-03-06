@@ -9,6 +9,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/wasya-io/go-kilo/app/boundary/provider/input"
+	"github.com/wasya-io/go-kilo/app/entity/key"
 	"github.com/wasya-io/go-kilo/editor/events"
 	"github.com/wasya-io/go-kilo/editor/logger"
 	"golang.org/x/sys/unix"
@@ -16,15 +18,15 @@ import (
 
 // Editor はエディタの状態を管理する構造体
 type Editor struct {
-	term              *terminalState
-	ui                *UI
-	quit              chan struct{}
-	isQuitting        bool
-	quitWarningShown  bool
-	buffer            *Buffer
-	eventBuffer       []KeyEvent
-	fileManager       *FileManager
-	input             *InputHandler
+	term             *terminalState
+	ui               *UI
+	quit             chan struct{}
+	isQuitting       bool
+	quitWarningShown bool
+	buffer           *Buffer
+	eventBuffer      []key.KeyEvent
+	fileManager      *FileManager
+	// input             *InputHandler
 	config            *Config
 	eventManager      *events.EventManager // 追加: イベントマネージャー
 	termState         *terminalState
@@ -34,6 +36,7 @@ type Editor struct {
 	statusMessage     string
 	statusMessageTime int
 	stateManager      *EditorStateManager // 追加
+	inputProvider     input.Provider      // 追加
 }
 
 type WinSize struct {
@@ -42,7 +45,7 @@ type WinSize struct {
 }
 
 // New は新しいEditorインスタンスを作成する
-func New(testMode bool, eventManager *events.EventManager, buffer *Buffer, fileManager *FileManager) (*Editor, error) {
+func New(testMode bool, eventManager *events.EventManager, buffer *Buffer, fileManager *FileManager, inputProvider input.Provider) (*Editor, error) {
 	// 1. 必須コンポーネントのチェック
 	if eventManager == nil || buffer == nil || fileManager == nil {
 		return nil, fmt.Errorf("required components are not initialized")
@@ -69,10 +72,6 @@ func New(testMode bool, eventManager *events.EventManager, buffer *Buffer, fileM
 	// 4. UIコンポーネントの初期化
 	ui := NewUI(screenRows, screenCols, eventManager)
 
-	// 5. Input Handlerの初期化
-	keyReader := NewStandardKeyReader()
-	inputParser := NewStandardInputParser()
-
 	// 6. Editorインスタンスの作成
 	e := &Editor{
 		ui:               ui,
@@ -85,10 +84,8 @@ func New(testMode bool, eventManager *events.EventManager, buffer *Buffer, fileM
 		cleanupChan:      make(chan struct{}),
 		logger:           logger.New(config.DebugMode),
 		fileManager:      fileManager,
+		inputProvider:    inputProvider,
 	}
-
-	// 7. Input Handlerの設定
-	e.input = NewInputHandler(e, eventManager, keyReader, inputParser)
 
 	if !testMode {
 		// 8. 初期コンテンツの設定
@@ -426,7 +423,7 @@ func (e *Editor) ProcessKeypress() error {
 }
 
 // readEvent はイベントを読み取る
-func (e *Editor) readEvent() (KeyEvent, error) {
+func (e *Editor) readEvent() (key.KeyEvent, error) {
 
 	// バッファにイベントがある場合はそれを返す
 	if len(e.eventBuffer) > 0 {
@@ -434,11 +431,10 @@ func (e *Editor) readEvent() (KeyEvent, error) {
 		e.eventBuffer = e.eventBuffer[1:]
 		return event, nil
 	}
-
-	event, remainingEvents, err := e.input.HandleKeypress()
+	event, remainingEvents, err := e.inputProvider.GetInputEvents()
 	if err != nil {
 		e.logger.Log("error", fmt.Sprintf("Keypress error: %v", err))
-		return KeyEvent{}, err
+		return key.KeyEvent{}, err
 	}
 
 	// 残りのイベントがある場合はバッファに追加
@@ -519,30 +515,30 @@ func (e *Editor) SaveFile() error {
 }
 
 // createCommand はキーイベントからコマンドを作成する
-func (e *Editor) createCommand(event KeyEvent) (Command, error) {
+func (e *Editor) createCommand(event key.KeyEvent) (Command, error) {
 	switch event.Type {
-	case KeyEventChar, KeyEventSpecial:
+	case key.KeyEventChar, key.KeyEventSpecial:
 		// 警告状態をクリア
 		if e.quitWarningShown {
 			e.quitWarningShown = false
 			e.SetStatusMessage("")
 		}
-		if event.Type == KeyEventChar {
+		if event.Type == key.KeyEventChar {
 			return NewInsertCharCommand(e, event.Rune), nil
 		}
 		return e.createSpecialKeyCommand(event.Key), nil
-	case KeyEventControl:
+	case key.KeyEventControl:
 		return e.createControlKeyCommand(event.Key), nil
-	case KeyEventMouse:
-		if event.Key == KeyMouseWheel {
+	case key.KeyEventMouse:
+		if event.Key == key.KeyMouseWheel {
 			// マウスホイールイベントは専用のカーソル移動コマンドを使用
 			switch event.MouseAction {
-			case MouseScrollUp:
+			case key.MouseScrollUp:
 				return NewMoveCursorCommand(e, MouseWheelUp), nil
-			case MouseScrollDown:
+			case key.MouseScrollDown:
 				return NewMoveCursorCommand(e, MouseWheelDown), nil
 			}
-		} else if event.Key == KeyMouseClick {
+		} else if event.Key == key.KeyMouseClick {
 			// マウスクリックイベントは現時点では無視
 			// 必要に応じて適切なコマンドを実装できます
 			return nil, nil
@@ -552,23 +548,23 @@ func (e *Editor) createCommand(event KeyEvent) (Command, error) {
 }
 
 // createSpecialKeyCommand は特殊キーに対応するコマンドを作成する
-func (e *Editor) createSpecialKeyCommand(key Key) Command {
-	switch key {
-	case KeyArrowLeft:
+func (e *Editor) createSpecialKeyCommand(k key.Key) Command {
+	switch k {
+	case key.KeyArrowLeft:
 		return NewMoveCursorCommand(e, CursorLeft)
-	case KeyArrowRight:
+	case key.KeyArrowRight:
 		return NewMoveCursorCommand(e, CursorRight)
-	case KeyArrowUp:
+	case key.KeyArrowUp:
 		return NewMoveCursorCommand(e, CursorUp)
-	case KeyArrowDown:
+	case key.KeyArrowDown:
 		return NewMoveCursorCommand(e, CursorDown)
-	case KeyBackspace:
+	case key.KeyBackspace:
 		return NewDeleteCharCommand(e)
-	case KeyEnter:
+	case key.KeyEnter:
 		return NewInsertNewlineCommand(e)
-	case KeyTab:
+	case key.KeyTab:
 		return NewInsertTabCommand(e)
-	case KeyShiftTab:
+	case key.KeyShiftTab:
 		return NewUndentCommand(e)
 	default:
 		return nil
@@ -576,11 +572,11 @@ func (e *Editor) createSpecialKeyCommand(key Key) Command {
 }
 
 // createControlKeyCommand はコントロールキーに対応するコマンドを作成する
-func (e *Editor) createControlKeyCommand(key Key) Command {
-	switch key {
-	case KeyCtrlS:
+func (e *Editor) createControlKeyCommand(k key.Key) Command {
+	switch k {
+	case key.KeyCtrlS:
 		return NewSaveCommand(e)
-	case KeyCtrlQ, KeyCtrlC:
+	case key.KeyCtrlQ, key.KeyCtrlC:
 		if e.IsDirty() && !e.quitWarningShown {
 			e.quitWarningShown = true
 			e.SetStatusMessage("Warning! File has unsaved changes. Press Ctrl-Q or Ctrl-C again to quit.")
