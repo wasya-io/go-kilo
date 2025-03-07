@@ -4,7 +4,8 @@ import (
 	"fmt"
 	"unicode/utf8"
 
-	"github.com/wasya-io/go-kilo/editor/events"
+	"github.com/wasya-io/go-kilo/app/config"
+	"github.com/wasya-io/go-kilo/app/entity/contents"
 )
 
 // KeyReader はキー入力を読み取るインターフェース
@@ -39,7 +40,7 @@ type EditorTestHelper interface {
 	IsDirty() bool
 	SetDirty(bool)
 	UpdateScroll()
-	GetConfig() *Config
+	GetConfig() *config.Config
 	GetCursor() Cursor
 	SetStatusMessage(format string, args ...interface{})
 	InsertChars(chars []rune)
@@ -61,7 +62,7 @@ func (e *Editor) GetRows() []string {
 // TestInput はテスト用に1文字入力をシミュレートする
 func (e *Editor) TestInput(ch rune) error {
 	pos := e.ui.GetCursor()
-	e.buffer.InsertChar(events.Position{X: pos.X, Y: pos.Y}, ch)
+	e.buffer.InsertChar(contents.Position{X: pos.X, Y: pos.Y}, ch)
 	// カーソルを1つ進める
 	e.ui.SetCursor(pos.X+1, pos.Y)
 	return nil
@@ -104,19 +105,19 @@ func (e *Editor) TestProcessInput(input []byte) error {
 
 	// バックスペースの処理
 	if len(input) == 1 && input[0] == 127 {
-		e.buffer.DeleteChar(events.Position{X: pos.X, Y: pos.Y})
+		e.buffer.DeleteChar(contents.Position{X: pos.X, Y: pos.Y})
 		return nil
 	}
 
 	// 通常の文字入力処理
 	if len(input) == 1 {
-		e.buffer.InsertChar(events.Position{X: pos.X, Y: pos.Y}, rune(input[0]))
+		e.buffer.InsertChar(contents.Position{X: pos.X, Y: pos.Y}, rune(input[0]))
 		e.ui.SetCursor(pos.X+1, pos.Y)
 	} else {
 		// マルチバイト文字の処理
 		r, _ := utf8.DecodeRune(input)
 		if r != utf8.RuneError {
-			e.buffer.InsertChar(events.Position{X: pos.X, Y: pos.Y}, r)
+			e.buffer.InsertChar(contents.Position{X: pos.X, Y: pos.Y}, r)
 			e.ui.SetCursor(pos.X+1, pos.Y)
 		}
 	}
@@ -130,14 +131,14 @@ func (e *Editor) TestDelete() error {
 
 	if pos.X > 0 {
 		// 行の途中での削除
-		e.buffer.DeleteChar(events.Position{X: pos.X, Y: pos.Y})
+		e.buffer.DeleteChar(contents.Position{X: pos.X, Y: pos.Y})
 		e.ui.SetCursor(pos.X-1, pos.Y) // カーソルを1つ左に移動
 	} else if pos.Y > 0 {
 		// 行頭での削除（前の行との結合）
-		prevRow := e.buffer.getRow(pos.Y - 1)
+		prevRow := e.buffer.GetRow(pos.Y - 1)
 		if prevRow != nil {
 			targetX := prevRow.GetRuneCount() // 前の行の末尾位置
-			e.buffer.DeleteChar(events.Position{X: pos.X, Y: pos.Y})
+			e.buffer.DeleteChar(contents.Position{X: pos.X, Y: pos.Y})
 			e.ui.SetCursor(targetX, pos.Y-1) // 前の行の末尾へ移動
 		}
 	}
@@ -146,7 +147,7 @@ func (e *Editor) TestDelete() error {
 }
 
 // SetRowsForTest はテスト用に行データを直接設定する
-func (e *Editor) SetRowsForTest(rows []*Row) {
+func (e *Editor) SetRowsForTest(rows []*contents.Row) {
 	content := make([]string, len(rows))
 	for i, row := range rows {
 		if row != nil {
@@ -180,7 +181,7 @@ func (e *Editor) TestMoveCursorByByte(direction byte) error {
 // GetCharAtCursor は現在のカーソル位置の文字を返す
 func (e *Editor) GetCharAtCursor() string {
 	pos := e.ui.GetCursor()
-	row := e.buffer.getRow(pos.Y)
+	row := e.buffer.GetRow(pos.Y)
 	if row == nil {
 		return ""
 	}
@@ -275,24 +276,24 @@ type TestEditorOperations struct {
 // EditorOperationsインターフェースの実装
 func (e *TestEditorOperations) InsertChar(ch rune) {
 	pos := e.editor.ui.GetCursor()
-	e.editor.buffer.InsertChar(events.Position{X: pos.X, Y: pos.Y}, ch)
+	e.editor.buffer.InsertChar(contents.Position{X: pos.X, Y: pos.Y}, ch)
 	e.editor.ui.SetCursor(pos.X+1, pos.Y)
 }
 
 func (e *TestEditorOperations) InsertChars(chars []rune) {
 	pos := e.editor.ui.GetCursor()
-	e.editor.buffer.InsertChars(events.Position{X: pos.X, Y: pos.Y}, chars)
+	e.editor.buffer.InsertChars(contents.Position{X: pos.X, Y: pos.Y}, chars)
 	e.editor.ui.SetCursor(pos.X+len(chars), pos.Y)
 }
 
 func (e *TestEditorOperations) DeleteChar() {
 	pos := e.editor.ui.GetCursor()
-	e.editor.buffer.DeleteChar(events.Position{X: pos.X, Y: pos.Y})
+	e.editor.buffer.DeleteChar(contents.Position{X: pos.X, Y: pos.Y})
 }
 
 func (e *TestEditorOperations) InsertNewline() {
 	pos := e.editor.ui.GetCursor()
-	e.editor.buffer.InsertNewline(events.Position{X: pos.X, Y: pos.Y})
+	e.editor.buffer.InsertNewline(contents.Position{X: pos.X, Y: pos.Y})
 	e.editor.ui.HandleNewLine()
 }
 
@@ -332,6 +333,6 @@ func (e *TestEditorOperations) GetContent(lineNum int) string {
 	return e.editor.GetContent(lineNum)
 }
 
-func (e *TestEditorOperations) GetConfig() *Config {
+func (e *TestEditorOperations) GetConfig() *config.Config {
 	return e.editor.GetConfig()
 }

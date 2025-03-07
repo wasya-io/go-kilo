@@ -7,8 +7,11 @@ import (
 	"runtime/debug"
 	"syscall"
 
+	"github.com/wasya-io/go-kilo/app/boundary/logger"
 	"github.com/wasya-io/go-kilo/app/boundary/provider/input"
 	"github.com/wasya-io/go-kilo/app/boundary/reader"
+	"github.com/wasya-io/go-kilo/app/config"
+	"github.com/wasya-io/go-kilo/app/entity/contents"
 	"github.com/wasya-io/go-kilo/app/usecase/parser"
 	"github.com/wasya-io/go-kilo/editor"
 	"github.com/wasya-io/go-kilo/editor/events"
@@ -35,17 +38,21 @@ func main() {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
+	conf := config.LoadConfig()
+	logger := logger.New(conf.DebugMode)
+
 	// エディタの初期化
 	eventManager := events.NewEventManager()
-	buffer := editor.NewBuffer(eventManager)
+
+	buffer := contents.NewContents(logger)
 	fileManager := editor.NewFileManager(buffer, eventManager)
 
 	// インプットプロバイダの初期化
-	parser := parser.NewStandardInputParser()
-	reader := reader.NewStandardKeyReader()
-	inputProvider := input.NewStandardInputProvider(reader, parser)
+	parser := parser.NewStandardInputParser(logger)
+	reader := reader.NewStandardKeyReader(logger)
+	inputProvider := input.NewStandardInputProvider(logger, reader, parser)
 
-	ed, err := editor.New(false, eventManager, buffer, fileManager, inputProvider)
+	ed, err := editor.New(false, conf, logger, eventManager, buffer, fileManager, inputProvider)
 	if err != nil {
 		die(err)
 	}

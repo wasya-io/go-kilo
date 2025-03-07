@@ -1,6 +1,9 @@
 package editor
 
-import "github.com/wasya-io/go-kilo/editor/events"
+import (
+	"github.com/wasya-io/go-kilo/app/config"
+	"github.com/wasya-io/go-kilo/editor/events"
+)
 
 // Command はエディタのコマンドを表すインターフェース
 type Command interface {
@@ -22,7 +25,7 @@ type EditorOperations interface {
 	UpdateScroll()
 	GetCursor() Cursor
 	GetContent(lineNum int) string
-	GetConfig() *Config
+	GetConfig() *config.Config
 }
 
 // InsertCharCommand は文字挿入コマンド
@@ -162,7 +165,7 @@ func NewInsertTabCommand(editor EditorOperations) *InsertTabCommand {
 
 func (c *InsertTabCommand) Execute() error {
 	// タブは空白に展開
-	tabWidth := GetTabWidth()
+	tabWidth := config.GetTabWidth()
 	for i := 0; i < tabWidth; i++ {
 		c.editor.InsertChar(' ')
 	}
@@ -201,7 +204,7 @@ func (c *UndentCommand) Execute() error {
 	}
 
 	// 削除するスペース数を計算
-	tabWidth := GetTabWidth()
+	tabWidth := config.GetTabWidth()
 	spacesToDelete := leftSpaces % tabWidth
 	if spacesToDelete == 0 {
 		spacesToDelete = tabWidth

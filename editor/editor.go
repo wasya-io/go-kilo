@@ -10,9 +10,11 @@ import (
 	"time"
 
 	"github.com/wasya-io/go-kilo/app/boundary/provider/input"
+	"github.com/wasya-io/go-kilo/app/config"
+	"github.com/wasya-io/go-kilo/app/entity/contents"
+	"github.com/wasya-io/go-kilo/app/entity/core"
 	"github.com/wasya-io/go-kilo/app/entity/key"
 	"github.com/wasya-io/go-kilo/editor/events"
-	"github.com/wasya-io/go-kilo/editor/logger"
 	"golang.org/x/sys/unix"
 )
 
@@ -23,16 +25,16 @@ type Editor struct {
 	quit             chan struct{}
 	isQuitting       bool
 	quitWarningShown bool
-	buffer           *Buffer
+	buffer           *contents.Contents
 	eventBuffer      []key.KeyEvent
 	fileManager      *FileManager
 	// input             *InputHandler
-	config            *Config
+	config            *config.Config
 	eventManager      *events.EventManager // 追加: イベントマネージャー
 	termState         *terminalState
 	cleanupOnce       sync.Once
 	cleanupChan       chan struct{}
-	logger            *logger.Logger
+	logger            core.Logger
 	statusMessage     string
 	statusMessageTime int
 	stateManager      *EditorStateManager // 追加
@@ -45,7 +47,7 @@ type WinSize struct {
 }
 
 // New は新しいEditorインスタンスを作成する
-func New(testMode bool, eventManager *events.EventManager, buffer *Buffer, fileManager *FileManager, inputProvider input.Provider) (*Editor, error) {
+func New(testMode bool, conf *config.Config, logger core.Logger, eventManager *events.EventManager, buffer *contents.Contents, fileManager *FileManager, inputProvider input.Provider) (*Editor, error) {
 	// 1. 必須コンポーネントのチェック
 	if eventManager == nil || buffer == nil || fileManager == nil {
 		return nil, fmt.Errorf("required components are not initialized")
@@ -67,7 +69,7 @@ func New(testMode bool, eventManager *events.EventManager, buffer *Buffer, fileM
 	screenCols := int(ws.Col)
 
 	// 3. 基本設定の読み込み
-	config := LoadConfig()
+	// config := config.LoadConfig()
 
 	// 4. UIコンポーネントの初期化
 	ui := NewUI(screenRows, screenCols, eventManager)
@@ -77,12 +79,12 @@ func New(testMode bool, eventManager *events.EventManager, buffer *Buffer, fileM
 		ui:               ui,
 		quit:             make(chan struct{}),
 		buffer:           buffer,
-		config:           config,
+		config:           conf,
 		eventManager:     eventManager,
 		isQuitting:       false,
 		quitWarningShown: false,
 		cleanupChan:      make(chan struct{}),
-		logger:           logger.New(config.DebugMode),
+		logger:           logger,
 		fileManager:      fileManager,
 		inputProvider:    inputProvider,
 	}
@@ -465,7 +467,7 @@ func (e *Editor) UpdateScroll() {
 		offset.Row = cursor.Y - visibleLines + 1
 	}
 
-	row := e.buffer.getRow(cursor.Y)
+	row := e.buffer.GetRow(cursor.Y)
 	if row == nil {
 		return
 	}
@@ -621,14 +623,14 @@ func (e *Editor) SetQuitWarningShown(shown bool) {
 }
 
 // EditorOperationsインターフェースの実装
-func (e *Editor) GetConfig() *Config {
+func (e *Editor) GetConfig() *config.Config {
 	return e.config
 }
 
 func (e *Editor) InsertChar(ch rune) {
 	e.logger.Log("edit", fmt.Sprintf("Inserting character: %c", ch))
 	pos := e.ui.GetCursor()
-	e.buffer.InsertChar(events.Position{X: pos.X, Y: pos.Y}, ch)
+	e.buffer.InsertChar(contents.Position{X: pos.X, Y: pos.Y}, ch)
 	// カーソルを1つ進める
 	e.ui.SetCursor(pos.X+1, pos.Y)
 	e.RefreshScreen()
@@ -640,14 +642,14 @@ func (e *Editor) DeleteChar() {
 
 	if pos.X > 0 {
 		// 行の途中での削除
-		e.buffer.DeleteChar(events.Position{X: pos.X, Y: pos.Y})
+		e.buffer.DeleteChar(contents.Position{X: pos.X, Y: pos.Y})
 		e.ui.SetCursor(pos.X-1, pos.Y) // カーソルを1つ左に移動
 	} else if pos.Y > 0 {
 		// 行頭での削除（前の行との結合）
-		prevRow := e.buffer.getRow(pos.Y - 1)
+		prevRow := e.buffer.GetRow(pos.Y - 1)
 		if prevRow != nil {
 			targetX := prevRow.GetRuneCount() // 前の行の末尾位置
-			e.buffer.DeleteChar(events.Position{X: pos.X, Y: pos.Y})
+			e.buffer.DeleteChar(contents.Position{X: pos.X, Y: pos.Y})
 			e.ui.SetCursor(targetX, pos.Y-1) // 前の行の末尾へ移動
 		}
 	}
@@ -665,7 +667,7 @@ func (e *Editor) MoveCursor(movement CursorMovement) {
 func (e *Editor) InsertNewline() {
 	e.logger.Log("edit", "Inserting newline")
 	pos := e.ui.GetCursor()
-	e.buffer.InsertNewline(events.Position{X: pos.X, Y: pos.Y})
+	e.buffer.InsertNewline(contents.Position{X: pos.X, Y: pos.Y})
 	// UIに改行処理を通知
 	e.ui.HandleNewLine()
 	e.UpdateScroll()
@@ -691,7 +693,7 @@ func (e *Editor) GetContent(lineNum int) string {
 
 func (e *Editor) InsertChars(chars []rune) {
 	pos := e.ui.GetCursor()
-	e.buffer.InsertChars(events.Position{X: pos.X, Y: pos.Y}, chars)
+	e.buffer.InsertChars(contents.Position{X: pos.X, Y: pos.Y}, chars)
 	// カーソルを入力文字数分進める
 	e.ui.SetCursor(pos.X+len(chars), pos.Y)
 }

@@ -4,17 +4,22 @@ import (
 	"fmt"
 	"unicode/utf8"
 
+	"github.com/wasya-io/go-kilo/app/entity/core"
 	"github.com/wasya-io/go-kilo/app/entity/key"
 )
 
-type StandardInputParser struct{}
+type StandardInputParser struct {
+	logger core.Logger
+}
 
 type InputParser interface {
 	Parse(buf []byte, n int) ([]key.KeyEvent, error)
 }
 
-func NewStandardInputParser() *StandardInputParser {
-	return &StandardInputParser{}
+func NewStandardInputParser(logger core.Logger) *StandardInputParser {
+	return &StandardInputParser{
+		logger: logger,
+	}
 }
 
 // Parse はバイトデータを解析してキーイベントを返す

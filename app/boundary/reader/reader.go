@@ -3,16 +3,22 @@ package reader
 import (
 	"fmt"
 	"os"
+
+	"github.com/wasya-io/go-kilo/app/entity/core"
 )
 
-type StandardKeyReader struct{}
+type StandardKeyReader struct {
+	logger core.Logger
+}
 
 type KeyReader interface {
 	Read() ([]byte, int, error)
 }
 
-func NewStandardKeyReader() *StandardKeyReader {
-	return &StandardKeyReader{}
+func NewStandardKeyReader(logger core.Logger) *StandardKeyReader {
+	return &StandardKeyReader{
+		logger: logger,
+	}
 }
 
 func (kr *StandardKeyReader) Read() ([]byte, int, error) {

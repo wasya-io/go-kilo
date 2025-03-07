@@ -3,12 +3,15 @@ package parser
 import (
 	"testing"
 
+	"github.com/wasya-io/go-kilo/app/boundary/logger"
 	"github.com/wasya-io/go-kilo/app/entity/key"
 )
 
 func TestStandardInputParser_Parse(t *testing.T) {
-	parser := NewStandardInputParser() // テスト対象のインスタンスを生成
-	buf := []byte{0x1b, 0x5b, 0x41}    // キーのエスケープシーケンス
+	logger := logger.New(true)
+
+	parser := NewStandardInputParser(logger) // テスト対象のインスタンスを生成
+	buf := []byte{0x1b, 0x5b, 0x41}          // キーのエスケープシーケンス
 	n := len(buf)
 	events, err := parser.Parse(buf, n) // テスト対象のメソッドを実行
 	if err != nil {
@@ -20,8 +23,9 @@ func TestStandardInputParser_Parse(t *testing.T) {
 }
 
 func TestStandardInputParser_ParseControlKey(t *testing.T) {
-	parser := NewStandardInputParser() // テスト対象のインスタンスを生成
-	buf := []byte{0x03}                // Ctrl+Cのコントロールキー
+	logger := logger.New(true)
+	parser := NewStandardInputParser(logger) // テスト対象のインスタンスを生成
+	buf := []byte{0x03}                      // Ctrl+Cのコントロールキー
 	n := len(buf)
 	events, err := parser.Parse(buf, n) // テスト対象のメソッドを実行
 	if err != nil {
@@ -33,8 +37,9 @@ func TestStandardInputParser_ParseControlKey(t *testing.T) {
 }
 
 func TestStandardInputParser_ParseSpecialKey(t *testing.T) {
-	parser := NewStandardInputParser() // テスト対象のインスタンスを生成
-	buf := []byte{0x0d}                // Enterの特殊キー
+	logger := logger.New(true)
+	parser := NewStandardInputParser(logger) // テスト対象のインスタンスを生成
+	buf := []byte{0x0d}                      // Enterの特殊キー
 	n := len(buf)
 	events, err := parser.Parse(buf, n) // テスト対象のメソッドを実行
 	if err != nil {
@@ -46,8 +51,9 @@ func TestStandardInputParser_ParseSpecialKey(t *testing.T) {
 }
 
 func TestStandardInputParser_ParseCharacter(t *testing.T) {
-	parser := NewStandardInputParser() // テスト対象のインスタンスを生成
-	buf := []byte{'a'}                 // 文字のバイトデータ
+	logger := logger.New(true)
+	parser := NewStandardInputParser(logger) // テスト対象のインスタンスを生成
+	buf := []byte{'a'}                       // 文字のバイトデータ
 	n := len(buf)
 	events, err := parser.Parse(buf, n) // テスト対象のメソッドを実行
 	if err != nil {
@@ -59,7 +65,8 @@ func TestStandardInputParser_ParseCharacter(t *testing.T) {
 }
 
 func TestStandardInputParser_ParseCharacterUTF8(t *testing.T) {
-	parser := NewStandardInputParser() // テスト対象のインスタンスを生成
+	logger := logger.New(true)
+	parser := NewStandardInputParser(logger) // テスト対象のインスタンスを生成
 	// buf := []byte{0xe3, 0x81, 0x82}    // UTF-8の文字のバイトデータ
 	buf := []byte("あ")
 	n := len(buf)
@@ -75,8 +82,9 @@ func TestStandardInputParser_ParseCharacterUTF8(t *testing.T) {
 }
 
 func TestStandardInputParser_ParseCharacterASCII(t *testing.T) {
-	parser := NewStandardInputParser() // テスト対象のインスタンスを生成
-	buf := []byte{'a'}                 // ASCIIの文字のバイトデータ
+	logger := logger.New(true)
+	parser := NewStandardInputParser(logger) // テスト対象のインスタンスを生成
+	buf := []byte{'a'}                       // ASCIIの文字のバイトデータ
 	n := len(buf)
 	events, err := parser.Parse(buf, n) // テスト対象のメソッドを実行
 	if err != nil {
@@ -90,8 +98,9 @@ func TestStandardInputParser_ParseCharacterASCII(t *testing.T) {
 }
 
 func TestStandardInputParser_ParseJapaneseString(t *testing.T) {
-	parser := NewStandardInputParser() // テスト対象のインスタンスを生成
-	buf := []byte("あいうえお")             // 日本語文字列のバイトデータ
+	logger := logger.New(true)
+	parser := NewStandardInputParser(logger) // テスト対象のインスタンスを生成
+	buf := []byte("あいうえお")                   // 日本語文字列のバイトデータ
 	n := len(buf)
 	events, err := parser.Parse(buf, n) // テスト対象のメソッドを実行
 	if err != nil {

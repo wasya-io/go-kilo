@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/wasya-io/go-kilo/app/boundary/reader"
+	"github.com/wasya-io/go-kilo/app/entity/core"
 	"github.com/wasya-io/go-kilo/app/entity/key"
 	"github.com/wasya-io/go-kilo/app/usecase/parser"
 )
@@ -13,12 +14,14 @@ type Provider interface {
 }
 
 type StandardInputProvider struct {
+	logger core.Logger
 	reader reader.KeyReader
 	parser parser.InputParser
 }
 
-func NewStandardInputProvider(reader reader.KeyReader, parser parser.InputParser) *StandardInputProvider {
+func NewStandardInputProvider(logger core.Logger, reader reader.KeyReader, parser parser.InputParser) *StandardInputProvider {
 	return &StandardInputProvider{
+		logger: logger,
 		reader: reader,
 		parser: parser,
 	}

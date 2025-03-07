@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wasya-io/go-kilo/app/entity/contents"
+	"github.com/wasya-io/go-kilo/app/entity/core/mathutil"
 	"github.com/wasya-io/go-kilo/editor/events"
 )
 
@@ -211,7 +213,7 @@ func (ui *UI) performSmoothScroll(data events.ScrollData) {
 	// スクロールステップごとに更新をキュー
 	stepSize := distance / ui.scrollState.scrollSteps
 	if stepSize == 0 {
-		stepSize = distance / Abs(distance) // 最小1ステップ
+		stepSize = distance / mathutil.Abs(distance) // 最小1ステップ
 	}
 
 	ui.BeginBatchUpdate()
@@ -305,7 +307,7 @@ func (ui *UI) clearLine() string {
 }
 
 // getScreenPosition はバッファ上の位置から画面上の位置を計算する
-func (ui *UI) getScreenPosition(cursor events.Position, buffer *Buffer, rowOffset, colOffset int) (int, int) {
+func (ui *UI) getScreenPosition(cursor events.Position, buffer *contents.Contents, rowOffset, colOffset int) (int, int) {
 	// 行番号の調整：エディタ領域内に収める
 	screenY := cursor.Y - rowOffset
 	if screenY < 0 {
@@ -315,7 +317,7 @@ func (ui *UI) getScreenPosition(cursor events.Position, buffer *Buffer, rowOffse
 	}
 
 	// 列位置の調整（文字の表示幅を考慮）
-	row := buffer.getRow(cursor.Y)
+	row := buffer.GetRow(cursor.Y)
 	var screenX int
 	if row != nil {
 		// カーソル位置までの表示幅を計算
@@ -331,7 +333,7 @@ func (ui *UI) getScreenPosition(cursor events.Position, buffer *Buffer, rowOffse
 }
 
 // drawStatusBar はステータスバーを描画する
-func (ui *UI) drawStatusBar(buffer *Buffer, filename string) error {
+func (ui *UI) drawStatusBar(buffer *contents.Contents, filename string) error {
 	status := filename
 	if status == "" {
 		status = "[No Name]"
@@ -345,14 +347,14 @@ func (ui *UI) drawStatusBar(buffer *Buffer, filename string) error {
 }
 
 // drawRows は編集領域を描画する
-func (ui *UI) drawRows(buffer *Buffer, rowOffset, colOffset int) error {
+func (ui *UI) drawRows(buffer *contents.Contents, rowOffset, colOffset int) error {
 	for y := 0; y < ui.screenRows-2; y++ {
 		filerow := y + rowOffset
 		ui.buffer.WriteString("\x1b[2K") // 各行をクリア
 
 		// ファイル内の有効な行の場合
 		if filerow < buffer.GetLineCount() {
-			row := buffer.getRow(filerow)
+			row := buffer.GetRow(filerow)
 			if row != nil {
 				ui.buffer.WriteString(ui.drawTextRow(row, colOffset))
 			}
@@ -373,7 +375,7 @@ func (ui *UI) drawRows(buffer *Buffer, rowOffset, colOffset int) error {
 }
 
 // RefreshScreen はエディタの画面を更新する
-func (ui *UI) RefreshScreen(buffer *Buffer, filename string, rowOffset, colOffset int) error {
+func (ui *UI) RefreshScreen(buffer *contents.Contents, filename string, rowOffset, colOffset int) error {
 	// 既存のバッファをクリア
 	ui.clearBuffer()
 
@@ -506,13 +508,13 @@ func (ui *UI) drawWelcomeMessage() string {
 }
 
 // drawTextRow はテキスト行を描画
-func (ui *UI) drawTextRow(row *Row, colOffset int) string {
+func (ui *UI) drawTextRow(row *contents.Row, colOffset int) string {
 	if row == nil {
 		return ""
 	}
 
 	var builder strings.Builder
-	chars := row.runeSlice
+	chars := row.GetRunes()
 	currentPos := 0
 
 	// colOffsetより前の文字をスキップし、画面幅を超えないように描画
@@ -641,12 +643,12 @@ func (ui *UI) SetCursor(x, y int) {
 }
 
 // MoveCursor は指定された方向にカーソルを移動し、必要な更新をキューに追加する
-func (ui *UI) MoveCursor(movement CursorMovement, buffer *Buffer) {
+func (ui *UI) MoveCursor(movement CursorMovement, buffer *contents.Contents) {
 	if buffer == nil || buffer.GetLineCount() == 0 {
 		return
 	}
 
-	currentRow := buffer.getRow(ui.cursor.Y)
+	currentRow := buffer.GetRow(ui.cursor.Y)
 	if currentRow == nil {
 		return
 	}
@@ -661,7 +663,7 @@ func (ui *UI) MoveCursor(movement CursorMovement, buffer *Buffer) {
 }
 
 // calculateNewCursorPosition は新しいカーソル位置を計算する（移動処理のロジックを分離）
-func (ui *UI) calculateNewCursorPosition(movement CursorMovement, buffer *Buffer, currentRow *Row) Cursor {
+func (ui *UI) calculateNewCursorPosition(movement CursorMovement, buffer *contents.Contents, currentRow *contents.Row) Cursor {
 	newPos := ui.cursor // 現在の位置からコピーを作成
 
 	switch movement {
@@ -669,7 +671,7 @@ func (ui *UI) calculateNewCursorPosition(movement CursorMovement, buffer *Buffer
 		if newPos.Y > 0 {
 			currentVisualX := currentRow.OffsetToScreenPosition(newPos.X)
 			newPos.Y--
-			targetRow := buffer.getRow(newPos.Y)
+			targetRow := buffer.GetRow(newPos.Y)
 			if targetRow != nil {
 				newPos.X = targetRow.ScreenPositionToOffset(currentVisualX)
 			}
@@ -678,7 +680,7 @@ func (ui *UI) calculateNewCursorPosition(movement CursorMovement, buffer *Buffer
 		if newPos.Y < buffer.GetLineCount()-1 {
 			currentVisualX := currentRow.OffsetToScreenPosition(newPos.X)
 			newPos.Y++
-			targetRow := buffer.getRow(newPos.Y)
+			targetRow := buffer.GetRow(newPos.Y)
 			if targetRow != nil {
 				newPos.X = targetRow.ScreenPositionToOffset(currentVisualX)
 			}
@@ -688,7 +690,7 @@ func (ui *UI) calculateNewCursorPosition(movement CursorMovement, buffer *Buffer
 			newPos.X--
 		} else if newPos.Y > 0 {
 			newPos.Y--
-			targetRow := buffer.getRow(newPos.Y)
+			targetRow := buffer.GetRow(newPos.Y)
 			if targetRow != nil {
 				newPos.X = targetRow.GetRuneCount()
 			}
@@ -709,7 +711,7 @@ func (ui *UI) calculateNewCursorPosition(movement CursorMovement, buffer *Buffer
 		if newPos.Y > 0 {
 			currentVisualX := currentRow.OffsetToScreenPosition(newPos.X)
 			newPos.Y = targetY
-			targetRow := buffer.getRow(newPos.Y)
+			targetRow := buffer.GetRow(newPos.Y)
 			if targetRow != nil {
 				newPos.X = targetRow.ScreenPositionToOffset(currentVisualX)
 			}
@@ -722,7 +724,7 @@ func (ui *UI) calculateNewCursorPosition(movement CursorMovement, buffer *Buffer
 		if newPos.Y < buffer.GetLineCount()-1 {
 			currentVisualX := currentRow.OffsetToScreenPosition(newPos.X)
 			newPos.Y = targetY
-			targetRow := buffer.getRow(newPos.Y)
+			targetRow := buffer.GetRow(newPos.Y)
 			if targetRow != nil {
 				newPos.X = targetRow.ScreenPositionToOffset(currentVisualX)
 			}

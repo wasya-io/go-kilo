@@ -1,21 +1,29 @@
 package editor
 
 import (
+	"errors"
 	"os"
 	"strings"
 
+	"github.com/wasya-io/go-kilo/app/entity/contents"
 	"github.com/wasya-io/go-kilo/editor/events"
 )
 
 // FileManager はファイル操作を管理する構造体
 type FileManager struct {
-	buffer       *Buffer
+	buffer       *contents.Contents
 	filename     string
 	eventManager *events.EventManager
 }
 
+// エラー定義
+var (
+	ErrNoBuffer   = errors.New("no buffer available")
+	ErrNoFilename = errors.New("no filename specified")
+)
+
 // NewFileManager は新しいFileManagerを作成する
-func NewFileManager(buffer *Buffer, eventManager *events.EventManager) *FileManager {
+func NewFileManager(buffer *contents.Contents, eventManager *events.EventManager) *FileManager {
 	return &FileManager{
 		buffer:       buffer,
 		eventManager: eventManager,

@@ -5,8 +5,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/wasya-io/go-kilo/app/boundary/logger"
 	"github.com/wasya-io/go-kilo/app/boundary/provider/input"
 	"github.com/wasya-io/go-kilo/app/boundary/reader"
+	"github.com/wasya-io/go-kilo/app/config"
+	"github.com/wasya-io/go-kilo/app/entity/contents"
 	"github.com/wasya-io/go-kilo/app/entity/key"
 	"github.com/wasya-io/go-kilo/app/usecase/parser"
 	"github.com/wasya-io/go-kilo/editor"
@@ -28,16 +31,19 @@ func setupTestFile(t *testing.T, content string) (string, func()) {
 
 func setupTestEditor(t *testing.T) *editor.Editor {
 	t.Helper()
+	conf := config.LoadConfig()
+	logger := logger.New(conf.DebugMode)
+
+	buffer := contents.NewContents(logger)
 	eventManager := events.NewEventManager()
-	buffer := editor.NewBuffer(eventManager)
 	fileManager := editor.NewFileManager(buffer, eventManager)
 
 	// TODO: モック用のインプットプロバイダを作る
-	parser := parser.NewStandardInputParser()
-	reader := reader.NewStandardKeyReader()
-	inputProvider := input.NewStandardInputProvider(reader, parser)
+	parser := parser.NewStandardInputParser(logger)
+	reader := reader.NewStandardKeyReader(logger)
+	inputProvider := input.NewStandardInputProvider(logger, reader, parser)
 
-	ed, err := editor.New(true, eventManager, buffer, fileManager, inputProvider)
+	ed, err := editor.New(true, conf, logger, eventManager, buffer, fileManager, inputProvider)
 	if err != nil {
 		t.Fatalf("エディタの初期化に失敗しました: %v", err)
 	}

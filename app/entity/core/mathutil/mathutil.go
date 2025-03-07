@@ -1,4 +1,4 @@
-package editor
+package mathutil
 
 // Max は2つの整数の大きい方を返す
 func Max(a, b int) int {
