@@ -452,29 +452,29 @@ func (e *Editor) readEvent() (key.KeyEvent, error) {
 func (e *Editor) UpdateScroll() {
 	// スクロール位置の更新処理
 	offsetCol, offsetRow := e.screen.GetOffset()
-	defer func(row, col int) {
-		e.screen.SetRowOffset(row)
-		e.screen.SetColOffset(col)
-	}(offsetRow, offsetCol)
 
 	// UI経由でカーソル位置を取得
 	pos := e.screen.GetCursor().ToPosition()
-
-	if pos.Y < offsetRow {
-		offsetRow = pos.Y
-	}
-	screenRowLines := e.screen.GetRowLines()
-	screenBottom := screenRowLines - 2
-	visibleLines := screenBottom - 1
-	if pos.Y >= (offsetRow + visibleLines) {
-		offsetRow = pos.Y - visibleLines + 1
-	}
-
 	row := e.buffer.GetRow(pos.Y)
 	if row == nil {
 		return
 	}
 
+	screenRowLines := e.screen.GetRowLines()
+	// ステータスバーとメッセージバー用に2行確保
+	visibleLines := screenRowLines - 2
+
+	// スクロール条件の計算
+	// カーソルが表示領域の上端より上にある場合
+	if pos.Y < offsetRow {
+		offsetRow = pos.Y
+	}
+	// カーソルが表示領域の下端に近づいた場合
+	if pos.Y >= offsetRow+visibleLines {
+		offsetRow = pos.Y - visibleLines + 1
+	}
+
+	// 水平方向のスクロール
 	cursorScreenPos := row.OffsetToScreenPosition(pos.X)
 	if cursorScreenPos < offsetCol {
 		offsetCol = cursorScreenPos
@@ -486,6 +486,7 @@ func (e *Editor) UpdateScroll() {
 		offsetCol = cursorScreenPos - rightMargin + 1
 	}
 
+	// スクロール位置の制限
 	if offsetRow < 0 {
 		offsetRow = 0
 	}
@@ -493,10 +494,14 @@ func (e *Editor) UpdateScroll() {
 		offsetCol = 0
 	}
 
-	maxRow := max(0, e.buffer.GetLineCount()-1)
+	maxRow := e.buffer.GetLineCount() - 1
 	if offsetRow > maxRow {
 		offsetRow = maxRow
 	}
+
+	// スクロール位置の更新
+	e.screen.SetRowOffset(offsetRow)
+	e.screen.SetColOffset(offsetCol)
 }
 
 // QuitChan は終了シグナルを監視するためのチャネルを返す

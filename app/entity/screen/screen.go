@@ -139,6 +139,8 @@ func (s *Screen) MoveCursor(movement cursor.Movement, buffer *contents.Contents)
 
 	newCursor := s.calculateNewCursorPosition(movement, buffer, currentRow)
 	newPos := newCursor.ToPosition()
+
+	// カーソル位置の更新
 	s.cursor.SetCursor(newPos.X, newPos.Y)
 }
 
@@ -251,11 +253,6 @@ func (s *Screen) drawMessageBar() error {
 func (s *Screen) getScreenPosition(x, y int, buffer *contents.Contents, rowOffset, colOffset int) (int, int) {
 	// 行番号の調整：エディタ領域内に収める
 	screenY := y - rowOffset
-	if screenY < 0 {
-		screenY = 0
-	} else if screenY >= s.rowLines-2 { // ステータスバーとメッセージバーの2行分を考慮
-		screenY = s.rowLines - 3
-	}
 
 	// 列位置の調整（文字の表示幅を考慮）
 	row := buffer.GetRow(y)
@@ -263,11 +260,6 @@ func (s *Screen) getScreenPosition(x, y int, buffer *contents.Contents, rowOffse
 	if row != nil {
 		// カーソル位置までの表示幅を計算
 		screenX = row.OffsetToScreenPosition(x) - colOffset
-		if screenX < 0 {
-			screenX = 0
-		} else if screenX >= s.colLines {
-			screenX = s.colLines - 1
-		}
 	}
 
 	return screenX, screenY
