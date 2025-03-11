@@ -13,11 +13,11 @@ import (
 	"github.com/wasya-io/go-kilo/app/boundary/writer"
 	"github.com/wasya-io/go-kilo/app/config"
 	"github.com/wasya-io/go-kilo/app/entity/contents"
+	"github.com/wasya-io/go-kilo/app/entity/core/term"
 	"github.com/wasya-io/go-kilo/app/entity/screen"
 	"github.com/wasya-io/go-kilo/app/usecase/parser"
 	"github.com/wasya-io/go-kilo/editor"
 	"github.com/wasya-io/go-kilo/editor/events"
-	"golang.org/x/sys/unix"
 )
 
 func main() {
@@ -55,18 +55,9 @@ func main() {
 	reader := reader.NewStandardKeyReader(logger)
 	inputProvider := input.NewStandardInputProvider(logger, reader, parser)
 
-	// スクリーンの初期化
-
 	// 2. ウィンドウサイズの取得
-	var ws *unix.Winsize
-	var err error
-	ws, err = unix.IoctlGetWinsize(int(os.Stdout.Fd()), unix.TIOCGWINSZ)
-	if err != nil {
-		panic(err)
-	}
+	screenRows, screenCols := term.GetWinSize()
 
-	screenRows := int(ws.Row)
-	screenCols := int(ws.Col)
 	builder := contents.NewBuilder()
 	writer := writer.NewStandardScreenWriter()
 	screen := screen.NewScreen(builder, writer, screenRows, screenCols)

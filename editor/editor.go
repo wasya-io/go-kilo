@@ -13,6 +13,7 @@ import (
 	"github.com/wasya-io/go-kilo/app/config"
 	"github.com/wasya-io/go-kilo/app/entity/contents"
 	"github.com/wasya-io/go-kilo/app/entity/core"
+	"github.com/wasya-io/go-kilo/app/entity/core/term"
 	"github.com/wasya-io/go-kilo/app/entity/cursor"
 	"github.com/wasya-io/go-kilo/app/entity/key"
 	"github.com/wasya-io/go-kilo/app/entity/screen"
@@ -21,7 +22,7 @@ import (
 
 // Editor はエディタの状態を管理する構造体
 type Editor struct {
-	term *terminalState
+	term *term.TerminalState
 	// ui               *UI
 	screen           screen.Screen
 	quit             chan struct{}
@@ -33,7 +34,7 @@ type Editor struct {
 	// input             *InputHandler
 	config            *config.Config
 	eventManager      *events.EventManager // 追加: イベントマネージャー
-	termState         *terminalState
+	termState         *term.TerminalState
 	cleanupOnce       sync.Once
 	cleanupChan       chan struct{}
 	logger            core.Logger
@@ -64,30 +65,8 @@ func New(
 		return nil, fmt.Errorf("required components are not initialized")
 	}
 
-	// // 2. ウィンドウサイズの取得
-	// var ws *unix.Winsize
-	// var err error
-	// if !testMode {
-	// 	ws, err = unix.IoctlGetWinsize(int(os.Stdout.Fd()), unix.TIOCGWINSZ)
-	// 	if err != nil {
-	// 		return nil, err
-	// 	}
-	// } else {
-	// 	ws = &unix.Winsize{Row: 24, Col: 80}
-	// }
-
-	// screenRows := int(ws.Row)
-	// screenCols := int(ws.Col)
-
-	// 3. 基本設定の読み込み
-	// config := config.LoadConfig()
-
-	// 4. UIコンポーネントの初期化
-	// ui := NewUI(screenRows, screenCols, eventManager)
-
 	// 6. Editorインスタンスの作成
 	e := &Editor{
-		// ui:               ui,
 		screen:           screen,
 		quit:             make(chan struct{}),
 		buffer:           buffer,
@@ -111,7 +90,7 @@ func New(
 		e.buffer.LoadContent(defaultContent)
 
 		// 9. ターミナルの設定
-		term, err := enableRawMode()
+		term, err := term.EnableRawMode()
 		if err != nil {
 			return nil, err
 		}
@@ -369,7 +348,7 @@ func (e *Editor) Cleanup() {
 
 		// 端末の状態を復元
 		if e.termState != nil {
-			e.termState.disableRawMode()
+			e.termState.DisableRawMode()
 			e.termState = nil
 		}
 

@@ -1,4 +1,4 @@
-package editor
+package term
 
 import (
 	"os"
@@ -7,11 +7,11 @@ import (
 )
 
 // terminalState は端末の元の状態を保持する構造体
-type terminalState struct {
+type TerminalState struct {
 	origTermios *unix.Termios
 }
 
-var globalTermState *terminalState
+var globalTermState *TerminalState
 
 // InitTerminal は端末の初期化を行う
 func InitTerminal() error {
@@ -20,7 +20,7 @@ func InitTerminal() error {
 		if r := recover(); r != nil {
 			// パニック時に必ず端末状態を復元
 			if globalTermState != nil {
-				globalTermState.disableRawMode()
+				globalTermState.DisableRawMode()
 			}
 			panic(r) // 元のパニックを再スロー
 		}
@@ -56,9 +56,24 @@ func InitTerminal() error {
 	return nil
 }
 
+func GetWinSize() (screenRows, screenCols int) {
+	// ウィンドウサイズの取得
+	var ws *unix.Winsize
+	var err error
+	ws, err = unix.IoctlGetWinsize(int(os.Stdout.Fd()), unix.TIOCGWINSZ)
+	if err != nil {
+		panic(err)
+	}
+
+	screenRows = int(ws.Row)
+	screenCols = int(ws.Col)
+
+	return screenRows, screenCols
+}
+
 // enableRawMode は端末をRawモードに設定する
-func enableRawMode() (*terminalState, error) {
-	term := &terminalState{}
+func EnableRawMode() (*TerminalState, error) {
+	term := &TerminalState{}
 
 	// 現在の設定を保存
 	termios, err := unix.IoctlGetTermios(int(os.Stdin.Fd()), unix.TCGETS)
@@ -79,7 +94,7 @@ func enableRawMode() (*terminalState, error) {
 }
 
 // disableRawMode は端末の設定を元の状態に戻す
-func (term *terminalState) disableRawMode() error {
+func (term *TerminalState) DisableRawMode() error {
 	// マウスサポートを無効化
 	os.Stdout.WriteString("\x1b[?1000l\x1b[?1002l\x1b[?1015l\x1b[?1006l")
 
