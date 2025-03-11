@@ -15,6 +15,7 @@ import (
 	"github.com/wasya-io/go-kilo/app/entity/contents"
 	"github.com/wasya-io/go-kilo/app/entity/core/term"
 	"github.com/wasya-io/go-kilo/app/entity/screen"
+	"github.com/wasya-io/go-kilo/app/usecase/controller"
 	"github.com/wasya-io/go-kilo/app/usecase/parser"
 	"github.com/wasya-io/go-kilo/editor"
 	"github.com/wasya-io/go-kilo/editor/events"
@@ -62,7 +63,18 @@ func main() {
 	writer := writer.NewStandardScreenWriter()
 	screen := screen.NewScreen(builder, writer, screenRows, screenCols)
 
-	ed, err := editor.New(false, conf, logger, eventManager, buffer, fileManager, inputProvider, *screen)
+	controller := controller.NewController(screen, buffer, fileManager, inputProvider, logger)
+
+	ed, err := editor.New(
+		false,
+		conf,
+		logger,
+		eventManager,
+		buffer,
+		inputProvider,
+		*screen,
+		controller,
+	)
 	if err != nil {
 		die(err)
 	}
@@ -70,7 +82,7 @@ func main() {
 
 	// コマンドライン引数の処理
 	if len(os.Args) > 1 {
-		if err := ed.OpenFile(os.Args[1]); err != nil {
+		if err := controller.OpenFile(os.Args[1]); err != nil {
 			die(err)
 		}
 	}

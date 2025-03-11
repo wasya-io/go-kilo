@@ -106,10 +106,6 @@ type TestEditorOperations struct {
 	editor *Editor
 }
 
-func (e *TestEditorOperations) SaveFile() error {
-	return e.editor.SaveFile()
-}
-
 func (e *TestEditorOperations) Quit() {
 	e.editor.Quit()
 }
@@ -120,14 +116,6 @@ func (e *TestEditorOperations) IsDirty() bool {
 
 func (e *TestEditorOperations) SetDirty(dirty bool) {
 	e.editor.SetDirty(dirty)
-}
-
-func (e *TestEditorOperations) SetStatusMessage(format string, args ...interface{}) {
-	e.editor.SetStatusMessage(format, args...)
-}
-
-func (e *TestEditorOperations) UpdateScroll() {
-	e.editor.UpdateScroll()
 }
 
 func (e *TestEditorOperations) GetContent(lineNum int) string {
