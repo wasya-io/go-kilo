@@ -4,3 +4,7 @@ package contents
 type Position struct {
 	X, Y int
 }
+
+func NewPosition(x, y int) Position {
+	return Position{X: x, Y: y}
+}

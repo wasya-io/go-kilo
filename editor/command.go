@@ -2,6 +2,7 @@ package editor
 
 import (
 	"github.com/wasya-io/go-kilo/app/config"
+	"github.com/wasya-io/go-kilo/app/entity/cursor"
 	"github.com/wasya-io/go-kilo/editor/events"
 )
 
@@ -16,14 +17,14 @@ type EditorOperations interface {
 	InsertChars(chars []rune) // 追加
 	DeleteChar()
 	InsertNewline()
-	MoveCursor(movement CursorMovement)
+	MoveCursor(movement cursor.Movement)
 	SaveFile() error
 	Quit()
 	IsDirty() bool
 	SetDirty(bool)
 	SetStatusMessage(format string, args ...interface{})
 	UpdateScroll()
-	GetCursor() Cursor
+	GetCursor() *cursor.Cursor
 	GetContent(lineNum int) string
 	GetConfig() *config.Config
 }
@@ -39,7 +40,7 @@ func NewInsertCharCommand(editor EditorOperations, ch rune) *InsertCharCommand {
 }
 
 func (c *InsertCharCommand) Execute() error {
-	c.editor.InsertChar(c.char)
+	c.editor.InsertChar(c.char) // InsertChar get:ui, mod:buffer, mod:ui, call:RefreshScreen
 	return nil
 }
 
@@ -54,7 +55,7 @@ func NewInsertCharsCommand(editor EditorOperations, chars ...rune) *InsertCharsC
 }
 
 func (c *InsertCharsCommand) Execute() error {
-	c.editor.InsertChars(c.chars)
+	c.editor.InsertChars(c.chars) // InsertChars get:ui, mod:buffer, mod:ui
 	return nil
 }
 
@@ -68,7 +69,7 @@ func NewDeleteCharCommand(editor EditorOperations) *DeleteCharCommand {
 }
 
 func (c *DeleteCharCommand) Execute() error {
-	c.editor.DeleteChar()
+	c.editor.DeleteChar() // get:ui, mod:buffer, mod:ui, call:RefreshScreen
 	return nil
 }
 
@@ -82,23 +83,23 @@ func NewInsertNewlineCommand(editor EditorOperations) *InsertNewlineCommand {
 }
 
 func (c *InsertNewlineCommand) Execute() error {
-	c.editor.InsertNewline()
+	c.editor.InsertNewline() // get:ui, mod:buffer, set:ui
 	return nil
 }
 
 // MoveCursorCommand はカーソル移動コマンド
 type MoveCursorCommand struct {
 	editor   EditorOperations
-	movement CursorMovement
+	movement cursor.Movement
 }
 
-func NewMoveCursorCommand(editor EditorOperations, movement CursorMovement) *MoveCursorCommand {
+func NewMoveCursorCommand(editor EditorOperations, movement cursor.Movement) *MoveCursorCommand {
 	return &MoveCursorCommand{editor: editor, movement: movement}
 }
 
 func (c *MoveCursorCommand) Execute() error {
-	c.editor.MoveCursor(c.movement)
-	c.editor.UpdateScroll()
+	c.editor.MoveCursor(c.movement) // mod:ui
+	c.editor.UpdateScroll()         // get:ui, get:buffer, mod:ui
 	return nil
 }
 
@@ -163,7 +164,7 @@ func NewInsertTabCommand(editor EditorOperations) *InsertTabCommand {
 	return &InsertTabCommand{editor: editor}
 }
 
-func (c *InsertTabCommand) Execute() error {
+func (c *InsertTabCommand) Execute() error { // get:config, mod:buffer, mod:ui
 	// タブは空白に展開
 	tabWidth := config.GetTabWidth()
 	for i := 0; i < tabWidth; i++ {
@@ -181,18 +182,19 @@ func NewUndentCommand(editor EditorOperations) *UndentCommand {
 	return &UndentCommand{editor: editor}
 }
 
-func (c *UndentCommand) Execute() error {
-	cursor := c.editor.GetCursor()
-	content := c.editor.GetContent(cursor.Y)
+func (c *UndentCommand) Execute() error { // get:config, mod:buffer, mod:ui
+	cur := c.editor.GetCursor()
+	pos := cur.ToPosition()
+	content := c.editor.GetContent(pos.Y)
 
 	// カーソルが行頭にある場合は処理を行わない
-	if cursor.X <= 0 {
+	if pos.X <= 0 {
 		return nil
 	}
 
 	// カーソル位置の左側のスペース数を数える
 	leftSpaces := 0
-	for i := cursor.X - 1; i >= 0; i-- {
+	for i := pos.X - 1; i >= 0; i-- {
 		if content[i] != ' ' {
 			break
 		}
@@ -220,7 +222,7 @@ func (c *UndentCommand) Execute() error {
 
 	// 残りのカーソル移動
 	for i := 1; i < (spacesToDelete - 1); i++ {
-		c.editor.MoveCursor(CursorLeft)
+		c.editor.MoveCursor(cursor.CursorLeft)
 	}
 
 	return nil
