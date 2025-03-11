@@ -7,6 +7,7 @@ import (
 	"runtime/debug"
 	"syscall"
 
+	"github.com/wasya-io/go-kilo/app/boundary/filemanager"
 	"github.com/wasya-io/go-kilo/app/boundary/logger"
 	"github.com/wasya-io/go-kilo/app/boundary/provider/input"
 	"github.com/wasya-io/go-kilo/app/boundary/reader"
@@ -18,7 +19,6 @@ import (
 	"github.com/wasya-io/go-kilo/app/usecase/controller"
 	"github.com/wasya-io/go-kilo/app/usecase/parser"
 	"github.com/wasya-io/go-kilo/editor"
-	"github.com/wasya-io/go-kilo/editor/events"
 )
 
 func main() {
@@ -46,10 +46,8 @@ func main() {
 	logger := logger.New(conf.DebugMode)
 
 	// エディタの初期化
-	eventManager := events.NewEventManager()
-
 	buffer := contents.NewContents(logger)
-	fileManager := editor.NewFileManager(buffer, eventManager)
+	fileManager := filemanager.NewFileManager(buffer)
 
 	// インプットプロバイダの初期化
 	parser := parser.NewStandardInputParser(logger)
@@ -69,7 +67,6 @@ func main() {
 		false,
 		conf,
 		logger,
-		eventManager,
 		buffer,
 		inputProvider,
 		*screen,

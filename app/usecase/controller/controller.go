@@ -12,7 +12,6 @@ import (
 	"github.com/wasya-io/go-kilo/app/entity/key"
 	"github.com/wasya-io/go-kilo/app/entity/screen"
 	"github.com/wasya-io/go-kilo/app/usecase/command"
-	"github.com/wasya-io/go-kilo/editor/events"
 )
 
 type Controller struct {
@@ -420,7 +419,7 @@ func (c *Controller) createControlKeyCommand(k key.Key) command.Command {
 		fn := func() error {
 			c.logger.Log("command", "Saving file")
 			c.setStatusMessage("Saving...")
-			c.fileManager.HandleSaveRequest(&events.SaveEvent{})
+			c.fileManager.HandleSaveRequest()
 			c.setStatusMessage("File saved")
 			return nil
 		}

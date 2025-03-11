@@ -6,14 +6,12 @@ import (
 	"strings"
 
 	"github.com/wasya-io/go-kilo/app/entity/contents"
-	"github.com/wasya-io/go-kilo/editor/events"
 )
 
 // StandardFileManager はファイル操作を管理する構造体
 type StandardFileManager struct {
-	buffer       *contents.Contents
-	filename     string
-	eventManager *events.EventManager
+	buffer   *contents.Contents
+	filename string
 }
 
 type FileManager interface {
@@ -21,7 +19,7 @@ type FileManager interface {
 	SaveFile(filename string, content []string) error
 	SaveCurrentFile() error
 	GetFilename() string
-	HandleSaveRequest(event *events.SaveEvent) error
+	HandleSaveRequest() error
 }
 
 // エラー定義
@@ -31,10 +29,9 @@ var (
 )
 
 // NewFileManager は新しいFileManagerを作成する
-func NewFileManager(buffer *contents.Contents, eventManager *events.EventManager) *StandardFileManager {
+func NewFileManager(buffer *contents.Contents) *StandardFileManager {
 	return &StandardFileManager{
-		buffer:       buffer,
-		eventManager: eventManager,
+		buffer: buffer,
 	}
 }
 
@@ -42,16 +39,11 @@ func NewFileManager(buffer *contents.Contents, eventManager *events.EventManager
 func (fm *StandardFileManager) OpenFile(filename string) error {
 	content, err := fm.readFile(filename)
 	if err != nil {
-		event := events.NewFileEvent(events.FileOpen, filename, nil)
-		event.SetError(err)
-		fm.publishEvent(event)
 		return err
 	}
 	fm.filename = filename
 	fm.buffer.LoadContent(content)
 
-	event := events.NewFileEvent(events.FileOpen, filename, content)
-	fm.publishEvent(event)
 	return nil
 }
 
@@ -79,12 +71,6 @@ func (fm *StandardFileManager) SaveFile(filename string, content []string) error
 	// バッファのダーティフラグをクリア
 	if fm.buffer != nil {
 		fm.buffer.SetDirty(false)
-	}
-
-	// ファイル保存イベントを発行
-	if fm.eventManager != nil {
-		event := events.NewFileEvent(events.FileSave, filename, content)
-		fm.publishEvent(event)
 	}
 
 	return nil
@@ -116,15 +102,8 @@ func (fm *StandardFileManager) readFile(filename string) ([]string, error) {
 	return lines, nil
 }
 
-// publishEvent はファイルイベントを発行する
-func (fm *StandardFileManager) publishEvent(event *events.FileEvent) {
-	if fm.eventManager != nil {
-		fm.eventManager.Publish(event)
-	}
-}
-
 // HandleSaveRequest はSystemEventのSaveリクエストを処理する
-func (fm *StandardFileManager) HandleSaveRequest(event *events.SaveEvent) error {
+func (fm *StandardFileManager) HandleSaveRequest() error {
 	// 保存前の状態確認
 	if fm.buffer == nil {
 		return ErrNoBuffer
@@ -138,15 +117,8 @@ func (fm *StandardFileManager) HandleSaveRequest(event *events.SaveEvent) error 
 
 	// 保存処理を実行
 	if err := fm.SaveCurrentFile(); err != nil {
-		// エラー時のFileEvent発行
-		fileEvent := events.NewFileEvent(events.FileSave, filename, nil)
-		fileEvent.SetError(err)
-		fm.publishEvent(fileEvent)
 		return err
 	}
 
-	// 成功時のFileEvent発行
-	fileEvent := events.NewFileEvent(events.FileSave, filename, fm.buffer.GetAllLines())
-	fm.publishEvent(fileEvent)
 	return nil
 }

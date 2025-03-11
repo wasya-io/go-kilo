@@ -13,32 +13,24 @@ import (
 	"github.com/wasya-io/go-kilo/app/entity/contents"
 	"github.com/wasya-io/go-kilo/app/entity/core"
 	"github.com/wasya-io/go-kilo/app/entity/core/term"
-	"github.com/wasya-io/go-kilo/app/entity/cursor"
-	"github.com/wasya-io/go-kilo/app/entity/key"
 	"github.com/wasya-io/go-kilo/app/entity/screen"
 	"github.com/wasya-io/go-kilo/app/usecase/controller"
-	"github.com/wasya-io/go-kilo/editor/events"
 )
 
 // Editor はエディタの状態を管理する構造体
 type Editor struct {
-	term              *term.TerminalState
-	screen            screen.Screen
-	controller        *controller.Controller
-	isQuitting        bool
-	quitWarningShown  bool
-	buffer            *contents.Contents
-	eventBuffer       []key.KeyEvent
-	config            *config.Config
-	eventManager      *events.EventManager // 追加: イベントマネージャー
-	termState         *term.TerminalState
-	cleanupOnce       sync.Once
-	cleanupChan       chan struct{}
-	logger            core.Logger
-	statusMessage     string
-	statusMessageTime int
-	stateManager      *EditorStateManager // 追加
-	inputProvider     input.Provider      // 追加
+	term             *term.TerminalState
+	screen           screen.Screen
+	controller       *controller.Controller
+	isQuitting       bool
+	quitWarningShown bool
+	buffer           *contents.Contents
+	config           *config.Config
+	termState        *term.TerminalState
+	cleanupOnce      sync.Once
+	cleanupChan      chan struct{}
+	logger           core.Logger
+	inputProvider    input.Provider // 追加
 }
 
 type WinSize struct {
@@ -51,16 +43,11 @@ func New(
 	testMode bool,
 	conf *config.Config,
 	logger core.Logger,
-	eventManager *events.EventManager,
 	buffer *contents.Contents,
 	inputProvider input.Provider,
 	screen screen.Screen,
 	controller *controller.Controller,
 ) (*Editor, error) {
-	// 1. 必須コンポーネントのチェック
-	if eventManager == nil || buffer == nil {
-		return nil, fmt.Errorf("required components are not initialized")
-	}
 
 	// 6. Editorインスタンスの作成
 	e := &Editor{
@@ -68,7 +55,6 @@ func New(
 		controller:       controller,
 		buffer:           buffer,
 		config:           conf,
-		eventManager:     eventManager,
 		isQuitting:       false,
 		quitWarningShown: false,
 		cleanupChan:      make(chan struct{}),
@@ -152,38 +138,6 @@ func (e *Editor) Quit() {
 	os.Exit(0)
 }
 
-// IsQuitWarningShown は終了警告が表示されているかを返す
-func (e *Editor) IsQuitWarningShown() bool {
-	return e.quitWarningShown
-}
-
-// SetQuitWarningShown は終了警告の表示状態を設定する
-func (e *Editor) SetQuitWarningShown(shown bool) {
-	e.quitWarningShown = shown
-}
-
-// EditorOperationsインターフェースの実装
-func (e *Editor) GetConfig() *config.Config {
-	return e.config
-}
-
-func (e *Editor) IsDirty() bool {
-	return e.buffer.IsDirty()
-}
-
-func (e *Editor) SetDirty(dirty bool) {
-	e.buffer.SetDirty(dirty)
-}
-
-// GetCursor はUI経由でカーソル位置を返す
-func (e *Editor) GetCursor() *cursor.Cursor {
-	return e.screen.GetCursor()
-}
-
-func (e *Editor) GetContent(lineNum int) string {
-	return e.buffer.GetContentLine(lineNum)
-}
-
 // Run はエディタのメインループを実行する
 func (e *Editor) Run() error {
 	defer e.Cleanup()
@@ -207,9 +161,4 @@ func (e *Editor) Run() error {
 			}
 		}
 	}
-}
-
-// GetEventManager はEventManagerを返す
-func (e *Editor) GetEventManager() *events.EventManager {
-	return e.eventManager
 }
