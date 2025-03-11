@@ -144,6 +144,14 @@ func (p *StandardInputParser) parseMouseEvent(buf []byte, n int) (key.KeyEvent, 
 					MouseCol:    cx - 1,
 					MouseAction: key.MouseMiddleClick,
 				}, nil
+			case 32: // マウスドラッグ
+				return key.KeyEvent{
+					Type:        key.KeyEventMouse,
+					Key:         key.KeyMouseClick,
+					MouseRow:    cy - 1,
+					MouseCol:    cx - 1,
+					MouseAction: key.MouseDrag,
+				}, nil
 			}
 		}
 	}
@@ -179,5 +187,5 @@ func (p *StandardInputParser) parseCharacter(buf []byte, n int) ([]key.KeyEvent,
 		return []key.KeyEvent{{Type: key.KeyEventChar, Rune: rune(buf[0])}}, nil
 	}
 
-	return nil, fmt.Errorf("unknown input")
+	return nil, fmt.Errorf("unknown input: %v", buf)
 }

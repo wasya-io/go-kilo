@@ -17,8 +17,8 @@ import (
 	"github.com/wasya-io/go-kilo/app/entity/core/term"
 	"github.com/wasya-io/go-kilo/app/entity/screen"
 	"github.com/wasya-io/go-kilo/app/usecase/controller"
+	"github.com/wasya-io/go-kilo/app/usecase/editor"
 	"github.com/wasya-io/go-kilo/app/usecase/parser"
-	"github.com/wasya-io/go-kilo/editor"
 )
 
 func main() {

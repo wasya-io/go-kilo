@@ -292,6 +292,7 @@ func (c *Controller) createCommand(event key.KeyEvent) (command.Command, error) 
 		} else if event.Key == key.KeyMouseClick {
 			// マウスクリックイベントは現時点では無視
 			// 必要に応じて適切なコマンドを実装できます
+			c.logger.Log("mouse", fmt.Sprintf("Mouse click event: %v", event.MouseAction))
 			return nil, nil
 		}
 	}

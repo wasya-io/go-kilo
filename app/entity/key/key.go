@@ -46,7 +46,8 @@ type MouseAction int
 const (
 	MouseScrollUp MouseAction = iota + 1
 	MouseScrollDown
-	MouseLeftClick   // 追加：左クリック
-	MouseRightClick  // 追加：右クリック
-	MouseMiddleClick // 追加：中クリック
+	MouseLeftClick   // 左クリック
+	MouseRightClick  // 右クリック
+	MouseMiddleClick // 中クリック
+	MouseDrag        // ドラッグ
 )
