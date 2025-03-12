@@ -39,5 +39,6 @@ func (p *StandardInputProvider) GetInputEvents() (key.KeyEvent, []key.KeyEvent, 
 	if err != nil {
 		return key.KeyEvent{}, nil, fmt.Errorf("input error: %v", err)
 	}
+	p.logger.ReadyWithType("get_input_events").WithType().WithString().WithString().Do(events[0], events[0].Type, events[0].Rune)
 	return events[0], events[1:], nil
 }

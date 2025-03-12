@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"time"
+
+	"github.com/wasya-io/go-kilo/app/entity/core"
 )
 
 // LogEntry はログのエントリを表す構造体
@@ -12,6 +14,7 @@ type LogEntry struct {
 	Timestamp string `json:"timestamp"`
 	Message   string `json:"message"`
 	Type      string `json:"type"`
+	processor *Logger
 }
 
 // Logger はロギング機能を提供する構造体
@@ -32,6 +35,14 @@ func New(debugMode bool) *Logger {
 		filePath:  fmt.Sprintf("log-%s.json", startTime.Format("20060102-150405")),
 		maxBuffer: 100,
 		startTime: startTime,
+	}
+}
+
+func (l *Logger) ReadyWithType(messageType string) core.LogEntry {
+	return &LogEntry{
+		Message:   "",
+		Type:      messageType,
+		processor: l,
 	}
 }
 
@@ -73,4 +84,23 @@ func (l *Logger) Flush() {
 // SetDebugMode はデバッグモードの状態を設定する
 func (l *Logger) SetDebugMode(enabled bool) {
 	l.debugMode = enabled
+}
+
+func (e *LogEntry) WithType() core.LogEntry {
+	e.Message = e.Message + " %T"
+	return e
+}
+
+func (e *LogEntry) WithString() core.LogEntry {
+	e.Message = e.Message + " %s"
+	return e
+}
+
+func (e *LogEntry) WithInt() core.LogEntry {
+	e.Message = e.Message + " %d"
+	return e
+}
+
+func (e *LogEntry) Do(values ...interface{}) {
+	e.processor.Log(e.Type, fmt.Sprintf(e.Message, values...))
 }

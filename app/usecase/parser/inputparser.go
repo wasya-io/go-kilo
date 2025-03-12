@@ -187,5 +187,13 @@ func (p *StandardInputParser) parseCharacter(buf []byte, n int) ([]key.KeyEvent,
 		return []key.KeyEvent{{Type: key.KeyEventChar, Rune: rune(buf[0])}}, nil
 	}
 
-	return nil, fmt.Errorf("unknown input: %v", buf)
+	// 未定義の制御文字を処理 - エラーを返す代わりに無視する
+	if buf[0] < 32 {
+		// コントロール文字として処理
+		return []key.KeyEvent{{Type: key.KeyEventControl, Key: key.KeyNone, Rune: rune(buf[0])}}, nil
+	}
+
+	// その他の入力は空のイベントとして処理 (エラーを発生させない)
+	p.logger.Log("warning", fmt.Sprintf("Unhandled input: %v", buf))
+	return []key.KeyEvent{{Type: key.KeyEventChar, Key: key.KeyNone}}, nil
 }
