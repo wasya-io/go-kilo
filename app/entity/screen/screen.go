@@ -21,27 +21,33 @@ type Screen struct {
 	scrollOffset position
 	rowLines     int
 	colLines     int
-	builder      *contents.Builder
+	builder      contents.Builder
 	writer       writer.ScreenWriter
-	message      *contents.Message
+	message      contents.Message
 	debugMessage contents.DebugMessage
-	cursor       *cursor.Cursor
+	cursor       cursor.Cursor
 }
 
 type position struct {
 	x, y int
 }
 
-func NewScreen(builder *contents.Builder, writer writer.ScreenWriter, rows, cols int) *Screen {
+func NewScreen(
+	builder contents.Builder,
+	writer writer.ScreenWriter,
+	message contents.Message,
+	cursor cursor.Cursor,
+	rows, cols int,
+) *Screen {
 	return &Screen{
 		scrollOffset: position{x: 0, y: 0},
 		rowLines:     rows,
 		colLines:     cols,
 		builder:      builder,
 		writer:       writer,
-		message:      contents.NewMessage("", nil),
+		message:      message,
 		debugMessage: "",
-		cursor:       cursor.NewCursor(),
+		cursor:       cursor,
 	}
 }
 
@@ -53,7 +59,7 @@ func (s *Screen) SetColOffset(x int) {
 	s.scrollOffset.x = x
 }
 
-func (s *Screen) SetCursor(cursor *cursor.Cursor) {
+func (s *Screen) SetCursor(cursor cursor.Cursor) {
 	s.cursor = cursor
 }
 
@@ -65,7 +71,7 @@ func (s *Screen) GetOffset() (int, int) {
 	return s.scrollOffset.x, s.scrollOffset.y
 }
 
-func (s *Screen) GetCursor() *cursor.Cursor {
+func (s *Screen) GetCursor() cursor.Cursor {
 	return s.cursor
 }
 
@@ -145,7 +151,7 @@ func (s *Screen) MoveCursor(movement cursor.Movement, buffer *contents.Contents)
 }
 
 // calculateNewCursorPosition は新しいカーソル位置を計算する（移動処理のロジックを分離）
-func (s *Screen) calculateNewCursorPosition(movement cursor.Movement, buffer *contents.Contents, currentRow *contents.Row) *cursor.Cursor {
+func (s *Screen) calculateNewCursorPosition(movement cursor.Movement, buffer *contents.Contents, currentRow *contents.Row) *cursor.StandardCursor {
 	newPos := s.cursor.ToPosition() // 現在の位置からコピーを作成
 
 	switch movement {
@@ -233,7 +239,7 @@ func (s *Screen) drawMessageBar() error {
 	}
 
 	// メッセージを表示（5秒経過したら消去）
-	if s.message.Message != "" && time.Now().Unix()-s.message.MessageTime < 5 {
+	if s.message.Get() != "" && time.Now().Unix()-s.message.GetTime() < 5 {
 		s.builder.Write(s.message.String())
 		// if len(s.message.Args) > 0 {
 		// 	fmt.Fprintf(&ui.buffer, ui.message, ui.messageArgs...)

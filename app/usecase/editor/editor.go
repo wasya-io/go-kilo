@@ -20,7 +20,7 @@ import (
 // Editor はエディタの状態を管理する構造体
 type Editor struct {
 	term             *term.TerminalState
-	screen           screen.Screen
+	screen           *screen.Screen
 	controller       *controller.Controller
 	isQuitting       bool
 	quitWarningShown bool
@@ -45,7 +45,7 @@ func New(
 	logger core.Logger,
 	buffer *contents.Contents,
 	inputProvider input.Provider,
-	screen screen.Screen,
+	screen *screen.Screen,
 	controller *controller.Controller,
 ) (*Editor, error) {
 
@@ -136,6 +136,10 @@ func (e *Editor) Cleanup() {
 func (e *Editor) Quit() {
 	e.Cleanup()
 	os.Exit(0)
+}
+
+func (e *Editor) OpenFile(filename string) error {
+	return e.controller.OpenFile(filename)
 }
 
 // Run はエディタのメインループを実行する

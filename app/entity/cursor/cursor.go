@@ -2,13 +2,21 @@ package cursor
 
 import "github.com/wasya-io/go-kilo/app/entity/contents"
 
-type Cursor struct {
+type Cursor interface {
+	NewLine()
+	ToPosition() contents.Position
+	SetCursor(x, y int)
+	Row() int
+	Col() int
+}
+
+type StandardCursor struct {
 	position       position
 	latestPosition position
 }
 
-func NewCursor() *Cursor {
-	return &Cursor{
+func NewCursor() *StandardCursor {
+	return &StandardCursor{
 		position:       newPosition(0, 0),
 		latestPosition: newPosition(0, 0),
 	}
@@ -34,28 +42,28 @@ func newPosition(x, y int) position {
 	return position{x: x, y: y}
 }
 
-func (c *Cursor) NewLine() {
+func (c *StandardCursor) NewLine() {
 	c.latestPosition = c.position
 	c.position.x = 0
 	c.position.y++
 }
 
-func (c *Cursor) ToPosition() contents.Position {
+func (c *StandardCursor) ToPosition() contents.Position {
 	return contents.Position{
 		X: c.position.x,
 		Y: c.position.y,
 	}
 }
 
-func (c *Cursor) SetCursor(x, y int) {
+func (c *StandardCursor) SetCursor(x, y int) {
 	c.latestPosition = c.position
 	c.position = newPosition(x, y)
 }
 
-func (c *Cursor) Row() int {
+func (c *StandardCursor) Row() int {
 	return c.position.y
 }
 
-func (c *Cursor) Col() int {
+func (c *StandardCursor) Col() int {
 	return c.position.x
 }

@@ -5,29 +5,36 @@ import (
 	"strings"
 )
 
-type Builder struct {
+type Builder interface {
+	Clear()
+	Write(s string)
+	MoveCursor(row, col int) string
+	Build() string
+}
+
+type StandardContentsBuilder struct {
 	buffer strings.Builder
 }
 
-func NewBuilder() *Builder {
-	return &Builder{
+func NewBuilder() *StandardContentsBuilder {
+	return &StandardContentsBuilder{
 		buffer: strings.Builder{},
 	}
 }
 
-func (b *Builder) Clear() {
+func (b *StandardContentsBuilder) Clear() {
 	b.buffer.Reset()
 }
 
-func (b *Builder) Write(s string) {
+func (b *StandardContentsBuilder) Write(s string) {
 	b.buffer.WriteString(s)
 }
 
 // moveCursor はカーソルを指定位置に移動する
-func (b *Builder) MoveCursor(row, col int) string {
+func (b *StandardContentsBuilder) MoveCursor(row, col int) string {
 	return fmt.Sprintf("\x1b[%d;%dH", row+1, col+1)
 }
 
-func (b *Builder) Build() string {
+func (b *StandardContentsBuilder) Build() string {
 	return b.buffer.String()
 }

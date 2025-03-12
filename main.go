@@ -6,19 +6,6 @@ import (
 	"os/signal"
 	"runtime/debug"
 	"syscall"
-
-	"github.com/wasya-io/go-kilo/app/boundary/filemanager"
-	"github.com/wasya-io/go-kilo/app/boundary/logger"
-	"github.com/wasya-io/go-kilo/app/boundary/provider/input"
-	"github.com/wasya-io/go-kilo/app/boundary/reader"
-	"github.com/wasya-io/go-kilo/app/boundary/writer"
-	"github.com/wasya-io/go-kilo/app/config"
-	"github.com/wasya-io/go-kilo/app/entity/contents"
-	"github.com/wasya-io/go-kilo/app/entity/core/term"
-	"github.com/wasya-io/go-kilo/app/entity/screen"
-	"github.com/wasya-io/go-kilo/app/usecase/controller"
-	"github.com/wasya-io/go-kilo/app/usecase/editor"
-	"github.com/wasya-io/go-kilo/app/usecase/parser"
 )
 
 func main() {
@@ -42,36 +29,7 @@ func main() {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
-	conf := config.LoadConfig()
-	logger := logger.New(conf.DebugMode)
-
-	// エディタの初期化
-	buffer := contents.NewContents(logger)
-	fileManager := filemanager.NewFileManager(buffer)
-
-	// インプットプロバイダの初期化
-	parser := parser.NewStandardInputParser(logger)
-	reader := reader.NewStandardKeyReader(logger)
-	inputProvider := input.NewStandardInputProvider(logger, reader, parser)
-
-	// 2. ウィンドウサイズの取得
-	screenRows, screenCols := term.GetWinSize()
-
-	builder := contents.NewBuilder()
-	writer := writer.NewStandardScreenWriter()
-	screen := screen.NewScreen(builder, writer, screenRows, screenCols)
-
-	controller := controller.NewController(screen, buffer, fileManager, inputProvider, logger)
-
-	ed, err := editor.New(
-		false,
-		conf,
-		logger,
-		buffer,
-		inputProvider,
-		*screen,
-		controller,
-	)
+	ed, err := NewEditor()
 	if err != nil {
 		die(err)
 	}
@@ -79,7 +37,7 @@ func main() {
 
 	// コマンドライン引数の処理
 	if len(os.Args) > 1 {
-		if err := controller.OpenFile(os.Args[1]); err != nil {
+		if err := ed.OpenFile(os.Args[1]); err != nil {
 			die(err)
 		}
 	}
