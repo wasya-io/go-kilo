@@ -77,8 +77,8 @@ func (b *Contents) InsertChar(pos Position, ch rune) {
 	delete(b.rowCache, pos.Y)
 	b.isDirty = true
 
-	// イベントを発行
-	// b.publishBufferEvent(events.BufferContentChanged, pos, ch, prevState)
+	b.logger.Log("edit", fmt.Sprintf("character inserted: %c on %d,%d(x,y)", ch, pos.X, pos.Y))
+
 }
 
 // InsertChars は複数の文字を一度に挿入する
@@ -163,7 +163,7 @@ func (b *Contents) DeleteChar(pos Position) {
 }
 
 // InsertNewline は指定位置で改行を挿入する
-func (b *Contents) InsertNewline(pos Position) {
+func (b *Contents) InsertNewline(pos Position, indentSize int) {
 	// prevState := b.getCurrentState()
 
 	// 空のバッファの場合、新しい行を追加
@@ -193,10 +193,18 @@ func (b *Contents) InsertNewline(pos Position) {
 	// 元の行を更新
 	b.lines[pos.Y] = firstPart
 
+	// 引数から受け取ったインデントサイズに基づいてインデントを構築
+	indentation := ""
+	for i := 0; i < indentSize; i++ {
+		indentation += " " // スペース文字でインデント
+	}
+
 	// 新しい行を挿入するためのスペースを確保
 	b.lines = append(b.lines, "")
 	copy(b.lines[pos.Y+2:], b.lines[pos.Y+1:])
-	b.lines[pos.Y+1] = secondPart
+
+	// 新しい行にインデントを適用してから残りの部分を追加
+	b.lines[pos.Y+1] = indentation + secondPart
 
 	b.isDirty = true
 
@@ -207,6 +215,8 @@ func (b *Contents) InsertNewline(pos Position) {
 
 	// 構造的な変更を通知
 	// b.publishBufferEvent(events.BufferStructuralChange, pos, nil, prevState)
+
+	b.logger.Log("edit", fmt.Sprintf("newline inserted at %d,%d with indentation size: %d", pos.X, pos.Y, indentSize))
 }
 
 // GetLineCount は行数を返す

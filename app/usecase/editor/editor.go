@@ -132,12 +132,6 @@ func (e *Editor) Cleanup() {
 	})
 }
 
-// Quit はエディタを終了する
-func (e *Editor) Quit() {
-	e.Cleanup()
-	os.Exit(0)
-}
-
 func (e *Editor) OpenFile(filename string) error {
 	return e.controller.OpenFile(filename)
 }

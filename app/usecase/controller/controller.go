@@ -47,11 +47,10 @@ func NewController(
 
 func (c *Controller) RefreshScreen() error {
 	// UI更新の前にスクロール位置を更新
-	c.UpdateScroll()
+	c.updateScroll()
 
 	// UIの更新処理を実行
-	colOffset, rowOffset := c.screen.GetOffset()
-	err := c.screen.Redraw(c.contents, c.fileManager.GetFilename(), rowOffset, colOffset)
+	err := c.screen.Redraw(c.contents, c.fileManager.GetFilename())
 	if err != nil {
 		return err
 	}
@@ -60,8 +59,8 @@ func (c *Controller) RefreshScreen() error {
 	return c.screen.Flush()
 }
 
-// UpdateScroll はカーソル位置に基づいてスクロール位置を更新する
-func (c *Controller) UpdateScroll() {
+// updateScroll はカーソル位置に基づいてスクロール位置を更新する
+func (c *Controller) updateScroll() {
 	// スクロール位置の更新処理
 	offsetCol, offsetRow := c.screen.GetOffset()
 
@@ -149,13 +148,7 @@ func (c *Controller) OpenFile(filename string) error {
 	return c.fileManager.OpenFile(filename)
 }
 
-// SaveFile は現在の内容をファイルに保存する
-func (c *Controller) SaveFile() error {
-	return c.fileManager.SaveCurrentFile()
-}
-
-func (c *Controller) InsertChar(ch rune) {
-	c.logger.Log("edit", fmt.Sprintf("Inserting character: %c", ch))
+func (c *Controller) insertChar(ch rune) {
 	pos := c.screen.GetCursor().ToPosition()
 	c.contents.InsertChar(contents.Position{X: pos.X, Y: pos.Y}, ch)
 	// カーソルを1つ進める
@@ -163,15 +156,7 @@ func (c *Controller) InsertChar(ch rune) {
 	c.RefreshScreen()
 }
 
-func (c *Controller) InsertChars(chars []rune) {
-	cursor := c.screen.GetCursor()
-	pos := cursor.ToPosition()
-	c.contents.InsertChars(contents.Position{X: pos.X, Y: pos.Y}, chars)
-	// カーソルを入力文字数分進める
-	c.screen.SetCursorPosition(pos.X+len(chars), pos.Y)
-}
-
-func (c *Controller) DeleteChar() {
+func (c *Controller) deleteChar() {
 	c.logger.Log("edit", "Deleting character")
 	pos := c.screen.GetCursor().ToPosition()
 
@@ -192,22 +177,38 @@ func (c *Controller) DeleteChar() {
 	c.RefreshScreen()
 }
 
-func (c *Controller) MoveCursor(movement cursor.Movement) {
+func (c *Controller) moveCursor(movement cursor.Movement) {
 	c.logger.Log("cursor", fmt.Sprintf("Moving cursor: %v", movement))
 	// Buffer直接操作からUI経由に変更
 	c.screen.MoveCursor(movement, c.contents)
-	c.UpdateScroll()
+	c.updateScroll()
 }
 
-func (c *Controller) InsertNewline() {
+func (c *Controller) insertNewline() {
 	c.logger.Log("edit", "Inserting newline")
 	cursor := c.screen.GetCursor()
 	pos := cursor.ToPosition()
-	c.contents.InsertNewline(contents.Position{X: pos.X, Y: pos.Y})
-	// UIに改行処理を通知
-	cursor.NewLine()
-	c.screen.SetCursor(cursor)
-	c.UpdateScroll()
+
+	// 現在行のインデント文字数を計測
+	currentLine := c.contents.GetContentLine(pos.Y)
+	indentSize := 0
+	for _, r := range currentLine {
+		if r == '\t' || r == ' ' {
+			indentSize++
+		} else {
+			break
+		}
+	}
+
+	// 改行をインデントサイズとともに挿入
+	c.contents.InsertNewline(contents.Position{X: pos.X, Y: pos.Y}, indentSize)
+
+	// カーソルを新しい行のインデント位置に設定
+	cursor.NewLine() // まず次の行の行頭へ移動
+	// インデント位置にカーソルを設定
+	c.screen.SetCursorPosition(indentSize, pos.Y+1)
+
+	c.updateScroll()
 	c.RefreshScreen()
 }
 
@@ -255,15 +256,11 @@ func (c *Controller) createCommand(event key.KeyEvent) (command.Command, error) 
 			c.setStatusMessage("")
 		}
 		if event.Type == key.KeyEventChar {
-			fn := func() error {
-				c.logger.Log("edit", fmt.Sprintf("Inserting character: %c", event.Rune))
-				pos := c.screen.GetCursor().ToPosition()
-				c.contents.InsertChar(contents.Position{X: pos.X, Y: pos.Y}, event.Rune)
-				c.screen.SetCursorPosition(pos.X+1, pos.Y)
-				c.RefreshScreen()
+			fn := func(r rune) error {
+				c.insertChar(r)
 				return nil
 			}
-			return command.NewCommand(fn), nil
+			return command.NewInsertCharCommand(event.Rune, fn), nil
 		}
 		return c.createSpecialKeyCommand(event.Key), nil
 	case key.KeyEventControl:
@@ -275,16 +272,16 @@ func (c *Controller) createCommand(event key.KeyEvent) (command.Command, error) 
 			case key.MouseScrollUp:
 				fn := func() error {
 					c.logger.Log("cursor", "Moving cursor up")
-					c.MoveCursor(cursor.MouseWheelUp)
-					c.UpdateScroll()
+					c.moveCursor(cursor.MouseWheelUp)
+					c.updateScroll()
 					return nil
 				}
 				return command.NewCommand(fn), nil
 			case key.MouseScrollDown:
 				fn := func() error {
 					c.logger.Log("cursor", "Moving cursor down")
-					c.MoveCursor(cursor.MouseWheelDown)
-					c.UpdateScroll()
+					c.moveCursor(cursor.MouseWheelDown)
+					c.updateScroll()
 					return nil
 				}
 				return command.NewCommand(fn), nil
@@ -304,47 +301,39 @@ func (c *Controller) createSpecialKeyCommand(k key.Key) command.Command {
 	switch k {
 	case key.KeyArrowLeft:
 		fn := func() error {
-			c.logger.Log("cursor", "Moving cursor left")
-			c.MoveCursor(cursor.CursorLeft)
-			c.UpdateScroll()
+			c.moveCursor(cursor.CursorLeft)
 			return nil
 		}
 		return command.NewCommand(fn)
 	case key.KeyArrowRight:
 		fn := func() error {
-			c.logger.Log("cursor", "Moving cursor right")
-			c.MoveCursor(cursor.CursorRight)
-			c.UpdateScroll()
+			c.moveCursor(cursor.CursorRight)
 			return nil
 		}
 		return command.NewCommand(fn)
 	case key.KeyArrowUp:
 		fn := func() error {
-			c.logger.Log("cursor", "Moving cursor up")
-			c.MoveCursor(cursor.CursorUp)
-			c.UpdateScroll()
+			c.moveCursor(cursor.CursorUp)
 			return nil
 		}
 		return command.NewCommand(fn)
 	case key.KeyArrowDown:
 		fn := func() error {
-			c.logger.Log("cursor", "Moving cursor down")
-			c.MoveCursor(cursor.CursorDown)
-			c.UpdateScroll()
+			c.moveCursor(cursor.CursorDown)
 			return nil
 		}
 		return command.NewCommand(fn)
 	case key.KeyBackspace:
 		fn := func() error {
 			c.logger.Log("edit", "Deleting character")
-			c.DeleteChar()
+			c.deleteChar()
 			return nil
 		}
 		return command.NewCommand(fn)
 	case key.KeyEnter:
 		fn := func() error {
 			c.logger.Log("edit", "Inserting newline")
-			c.InsertNewline()
+			c.insertNewline()
 			return nil
 		}
 		return command.NewCommand(fn)
@@ -354,7 +343,7 @@ func (c *Controller) createSpecialKeyCommand(k key.Key) command.Command {
 			// タブは空白に展開
 			tabWidth := config.GetTabWidth()
 			for i := 0; i < tabWidth; i++ {
-				c.InsertChar(' ')
+				c.insertChar(' ')
 			}
 			return nil
 		}
@@ -397,12 +386,12 @@ func (c *Controller) createSpecialKeyCommand(k key.Key) command.Command {
 
 			// スペースを削除
 			for i := 0; i < spacesToDelete; i++ {
-				c.DeleteChar()
+				c.deleteChar()
 			}
 
 			// 残りのカーソル移動
 			for i := 1; i < (spacesToDelete - 1); i++ {
-				c.MoveCursor(cursor.CursorLeft)
+				c.moveCursor(cursor.CursorLeft)
 			}
 
 			return nil

@@ -1,6 +1,7 @@
 package screen
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -88,7 +89,7 @@ func (s *Screen) GetColLines() int {
 // }
 
 // Redraw は画面を再描画する
-func (s *Screen) Redraw(buffer *contents.Contents, filename string, rowOffset, colOffset int) error {
+func (s *Screen) Redraw(buffer *contents.Contents, filename string) error {
 	// 既存のバッファをクリア
 	s.builder.Clear()
 
@@ -97,7 +98,7 @@ func (s *Screen) Redraw(buffer *contents.Contents, filename string, rowOffset, c
 	s.builder.Write(escape + cursorHomeSequence)
 
 	// メインコンテンツの描画
-	if err := s.drawRows(buffer, rowOffset, colOffset); err != nil {
+	if err := s.drawRows(buffer, s.scrollOffset.y, s.scrollOffset.x); err != nil {
 		return err
 	}
 
@@ -114,8 +115,8 @@ func (s *Screen) Redraw(buffer *contents.Contents, filename string, rowOffset, c
 	// カーソル位置の設定（画面バッファに追加）
 	// cursor := ui.GetCursor() // Bufferからの直接参照をUI内部状態の参照に変更
 	pos := s.cursor.ToPosition()
-	screenX, screenY := s.getScreenPosition(pos.X, pos.Y, buffer, rowOffset, colOffset)
-	s.builder.Write(s.builder.MoveCursor(screenY, screenX))
+	screenX, screenY := s.getScreenPosition(pos.X, pos.Y, buffer, s.scrollOffset.y, s.scrollOffset.x)
+	s.builder.Write(fmt.Sprintf("\x1b[%d;%dH", screenY+1, screenX+1))
 
 	// バッファの内容を一括で画面に反映
 	return s.writer.Write(s.builder.Build())
@@ -227,7 +228,7 @@ func (s *Screen) calculateNewCursorPosition(movement cursor.Movement, buffer *co
 // drawMessageBar はメッセージバーを描画する
 func (s *Screen) drawMessageBar() error {
 	// カーソルを最下行に移動
-	s.builder.Write(s.builder.MoveCursor(s.rowLines-1, 0))
+	s.builder.Write(fmt.Sprintf("\x1b[%d;%dH", s.rowLines-1, 0))
 
 	// 行をクリア
 	s.builder.Write(escape + clearLineSequence)
