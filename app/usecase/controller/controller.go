@@ -9,6 +9,7 @@ import (
 	"github.com/wasya-io/go-kilo/app/entity/contents"
 	"github.com/wasya-io/go-kilo/app/entity/core"
 	"github.com/wasya-io/go-kilo/app/entity/cursor"
+	"github.com/wasya-io/go-kilo/app/entity/event"
 	"github.com/wasya-io/go-kilo/app/entity/key"
 	"github.com/wasya-io/go-kilo/app/entity/screen"
 	"github.com/wasya-io/go-kilo/app/usecase/command"
@@ -25,6 +26,13 @@ type Controller struct {
 	debugMode             bool
 	statusMessageDuration int
 	Quit                  chan struct{}
+	eventBus              *event.Bus // 追加: イベントバス
+}
+
+// GetContents はコントローラーが管理しているコンテンツを返します。
+// 主にテスト用途で使用されます。
+func (c *Controller) GetContents() *contents.Contents {
+	return c.contents
 }
 
 func NewController(
@@ -33,8 +41,9 @@ func NewController(
 	fileManager filemanager.FileManager,
 	inputProvider input.Provider,
 	logger core.Logger,
+	eventBus *event.Bus, // 追加: イベントバス
 ) *Controller {
-	return &Controller{
+	c := &Controller{
 		screen:                screen,
 		contents:              contents,
 		fileManager:           fileManager,
@@ -42,19 +51,76 @@ func NewController(
 		logger:                logger,
 		Quit:                  make(chan struct{}),
 		statusMessageDuration: 5,
+		eventBus:              eventBus, // 追加: イベントバスの設定
 	}
+
+	// イベントハンドラーの登録
+	c.registerEventHandlers()
+
+	return c
+}
+
+// registerEventHandlers はイベントハンドラーを登録します
+func (c *Controller) registerEventHandlers() {
+	// 保存イベントのハンドラー
+	saveHandler := event.NewSingleTypeHandler(event.TypeSave, func(e event.Event) (bool, error) {
+		if saveEvent, ok := e.Payload.(event.SaveEvent); ok {
+			c.logger.Log("event", fmt.Sprintf("Save event received: %s", saveEvent.Filename))
+			c.setStatusMessage("Saving...")
+			err := c.fileManager.HandleSaveRequest()
+			if err != nil {
+				c.setStatusMessage("Error saving file: %v", err)
+				return false, err
+			}
+			c.setStatusMessage("File saved")
+			return true, nil
+		}
+		return false, nil
+	})
+
+	// 終了イベントのハンドラー
+	quitHandler := event.NewSingleTypeHandler(event.TypeQuit, func(e event.Event) (bool, error) {
+		if quitEvent, ok := e.Payload.(event.QuitEvent); ok {
+			c.logger.Log("event", fmt.Sprintf("Quit event received, force=%v", quitEvent.Force))
+			if c.contents.IsDirty() && !quitEvent.Force && !c.quitWarningShown {
+				c.quitWarningShown = true
+				c.setStatusMessage("Warning! File has unsaved changes. Press Ctrl-Q or Ctrl-C again to quit.")
+				return true, nil
+			}
+
+			// 終了処理を実行
+			c.logger.Log("system", "Shutting down editor")
+			close(c.Quit)
+			return true, nil
+		}
+		return false, nil
+	})
+
+	// イベントバスにハンドラーを登録
+	c.eventBus.Subscribe(saveHandler)
+	c.eventBus.Subscribe(quitHandler)
+}
+
+// PublishSaveEvent は保存イベントを発行します
+func (c *Controller) PublishSaveEvent(filename string, force bool) {
+	c.logger.Log("event", fmt.Sprintf("Publishing save event: %s", filename))
+	c.eventBus.Publish(event.NewSaveEvent(filename, force))
+}
+
+// PublishQuitEvent は終了イベントを発行します
+func (c *Controller) PublishQuitEvent(force bool) {
+	c.logger.Log("event", fmt.Sprintf("Publishing quit event, force=%v", force))
+	c.eventBus.Publish(event.NewQuitEvent(force))
 }
 
 func (c *Controller) RefreshScreen() error {
 	// UI更新の前にスクロール位置を更新
 	c.updateScroll()
-
 	// UIの更新処理を実行
 	err := c.screen.Redraw(c.contents, c.fileManager.GetFilename())
 	if err != nil {
 		return err
 	}
-
 	// メッセージ表示後は即座にフラッシュする
 	return c.screen.Flush()
 }
@@ -288,7 +354,6 @@ func (c *Controller) createCommand(event key.KeyEvent) (command.Command, error) 
 			}
 		} else if event.Key == key.KeyMouseClick {
 			// マウスクリックイベントは現時点では無視
-			// 必要に応じて適切なコマンドを実装できます
 			c.logger.Log("mouse", fmt.Sprintf("Mouse click event: %v", event.MouseAction))
 			return nil, nil
 		}
@@ -406,23 +471,18 @@ func (c *Controller) createSpecialKeyCommand(k key.Key) command.Command {
 func (c *Controller) createControlKeyCommand(k key.Key) command.Command {
 	switch k {
 	case key.KeyCtrlS:
+		// 保存処理をイベントベースに変更
 		fn := func() error {
 			c.logger.Log("command", "Saving file")
-			c.setStatusMessage("Saving...")
-			c.fileManager.HandleSaveRequest()
-			c.setStatusMessage("File saved")
+			c.PublishSaveEvent(c.fileManager.GetFilename(), false)
 			return nil
 		}
 		return command.NewCommand(fn)
 	case key.KeyCtrlQ, key.KeyCtrlC:
+		// 終了処理をイベントベースに変更
 		fn := func() error {
-			if c.contents.IsDirty() && !c.quitWarningShown {
-				c.quitWarningShown = true
-				// 警告メッセージを直接設定（イベント発行なし）
-				c.setStatusMessage("Warning! File has unsaved changes. Press Ctrl-Q or Ctrl-C again to quit.")
-				return nil
-			}
-			close(c.Quit)
+			c.logger.Log("command", "Quitting")
+			c.PublishQuitEvent(false)
 			return nil
 		}
 		return command.NewCommand(fn)

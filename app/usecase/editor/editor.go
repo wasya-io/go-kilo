@@ -13,6 +13,7 @@ import (
 	"github.com/wasya-io/go-kilo/app/entity/contents"
 	"github.com/wasya-io/go-kilo/app/entity/core"
 	"github.com/wasya-io/go-kilo/app/entity/core/term"
+	"github.com/wasya-io/go-kilo/app/entity/event"
 	"github.com/wasya-io/go-kilo/app/entity/screen"
 	"github.com/wasya-io/go-kilo/app/usecase/controller"
 )
@@ -30,7 +31,8 @@ type Editor struct {
 	cleanupOnce      sync.Once
 	cleanupChan      chan struct{}
 	logger           core.Logger
-	inputProvider    input.Provider // 追加
+	inputProvider    input.Provider
+	eventBus         *event.Bus // イベントバスを追加
 }
 
 type WinSize struct {
@@ -47,8 +49,8 @@ func New(
 	inputProvider input.Provider,
 	screen *screen.Screen,
 	controller *controller.Controller,
+	eventBus *event.Bus, // イベントバスを追加
 ) (*Editor, error) {
-
 	// 6. Editorインスタンスの作成
 	e := &Editor{
 		screen:           screen,
@@ -60,6 +62,7 @@ func New(
 		cleanupChan:      make(chan struct{}),
 		logger:           logger,
 		inputProvider:    inputProvider,
+		eventBus:         eventBus, // イベントバスを設定
 	}
 
 	if !testMode {
@@ -70,7 +73,6 @@ func New(
 			"Press Ctrl-Q or Ctrl-C to quit.",
 		}
 		e.buffer.LoadContent(defaultContent)
-
 		// 9. ターミナルの設定
 		term, err := term.EnableRawMode()
 		if err != nil {
@@ -78,7 +80,6 @@ func New(
 		}
 		e.term = term
 		e.termState = term
-
 		// 10. クリーンアップハンドラの設定
 		go e.setupCleanupHandler()
 	}
@@ -102,6 +103,7 @@ func (e *Editor) setupCleanupHandler() {
 	// シグナル処理
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
 	select {
 	case <-sigChan:
 		e.Cleanup()
@@ -114,6 +116,11 @@ func (e *Editor) setupCleanupHandler() {
 // Cleanup は終了時の後処理を行う
 func (e *Editor) Cleanup() {
 	e.cleanupOnce.Do(func() {
+		// イベントバスのシャットダウン
+		if e.eventBus != nil {
+			e.eventBus.Shutdown()
+		}
+
 		// 最後にログをフラッシュする
 		e.logger.Flush()
 
