@@ -16,6 +16,11 @@ const (
 	clearSequence      = "[2J"  // 画面クリア
 	clearLineSequence  = "[K"   // 行クリア
 	cursorHomeSequence = "[H"   // カーソルを原点に移動
+	defaultTabWidth    = 4      // デフォルトのタブ幅
+
+	// 色関連
+	controlCharColor = "\x1b[2;37m" // グレー色 (暗い白色)
+	resetColor       = "\x1b[0m"    // 色のリセット
 )
 
 type Screen struct {
@@ -377,9 +382,30 @@ func (s *Screen) drawTextRow(row *contents.Row, colOffset int) string {
 			break
 		}
 
-		// 文字を描画
-		builder.WriteRune(char)
+		// 制御文字を特定のシンボルに置き換え
+		switch char {
+		case '\t':
+			builder.WriteString(controlCharColor)
+			builder.WriteString(strings.Repeat(" ", defaultTabWidth))
+			builder.WriteString(resetColor)
+		case ' ':
+			builder.WriteString(controlCharColor)
+			builder.WriteRune('·')
+			builder.WriteString(resetColor)
+		default:
+			builder.WriteRune(char)
+		}
+
 		currentPos += width
+	}
+
+	// 行末に改行マークを追加（画面幅を超えない場合のみ）
+	if currentPos-colOffset < s.colLines && row.GetContent() != "" {
+		// 行末に改行マークを追加（グレー色で表示）
+		builder.WriteString(controlCharColor)
+		builder.WriteString("↵")
+		builder.WriteString(resetColor)
+		currentPos++
 	}
 
 	// 行末までスペースで埋める
