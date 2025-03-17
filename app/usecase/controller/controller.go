@@ -190,14 +190,20 @@ func (c *Controller) updateScroll() {
 	// ステータスバーとメッセージバー用に2行確保
 	visibleLines := screenRowLines - 2
 
+	// カーソル周辺に表示する余白行数
+	const scrollMargin = 3
+
 	// スクロール条件の計算
 	// カーソルが表示領域の上端より上にある場合
-	if pos.Y < offsetRow {
-		offsetRow = pos.Y
+	if pos.Y < offsetRow+scrollMargin {
+		offsetRow = pos.Y - scrollMargin
+		if offsetRow < 0 {
+			offsetRow = 0
+		}
 	}
-	// カーソルが表示領域の下端に近づいた場合
-	if pos.Y >= offsetRow+visibleLines {
-		offsetRow = pos.Y - visibleLines + 1
+	// カーソルが表示領域の下端に近づいた場合（余白を確保）
+	if pos.Y >= offsetRow+visibleLines-scrollMargin {
+		offsetRow = pos.Y - visibleLines + scrollMargin + 1
 	}
 
 	// 水平方向のスクロール
