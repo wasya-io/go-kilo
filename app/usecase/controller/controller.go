@@ -343,6 +343,8 @@ func (c *Controller) insertNewline() {
 
 	// 現在行のインデント文字数を計測
 	currentLine := c.contents.GetContentLine(pos.Y)
+
+	// 行頭のインデントを計算する
 	indentSize := 0
 	for _, r := range currentLine {
 		if r == '\t' || r == ' ' {
@@ -350,6 +352,11 @@ func (c *Controller) insertNewline() {
 		} else {
 			break
 		}
+	}
+
+	// カーソルが行頭のインデント部分の中にある場合は、その位置までをインデントとして次の行に適用する
+	if pos.X < indentSize {
+		indentSize = pos.X
 	}
 
 	// 改行をインデントサイズとともに挿入
