@@ -2,6 +2,7 @@ package controller
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/wasya-io/go-kilo/app/boundary/filemanager"
 	"github.com/wasya-io/go-kilo/app/boundary/provider/input"
@@ -73,6 +74,12 @@ func (c *Controller) registerEventHandlers() {
 				return false, err
 			}
 			c.setStatusMessage("File saved")
+
+			// 画面を明示的に更新して、isDirtyの状態変化をステータスバーに反映する
+			if err := c.RefreshScreen(); err != nil {
+				c.logger.Log("error", fmt.Sprintf("Failed to refresh screen after save: %v", err))
+			}
+
 			return true, nil
 		}
 		return false, nil
@@ -82,15 +89,39 @@ func (c *Controller) registerEventHandlers() {
 	quitHandler := event.NewSingleTypeHandler(event.TypeQuit, func(e event.Event) (bool, error) {
 		if quitEvent, ok := e.Payload.(event.QuitEvent); ok {
 			c.logger.Log("event", fmt.Sprintf("Quit event received, force=%v", quitEvent.Force))
+
+			// ダーティ状態かつ強制終了でなく、警告が未表示の場合
 			if c.contents.IsDirty() && !quitEvent.Force && !c.quitWarningShown {
 				c.quitWarningShown = true
-				c.setStatusMessage("Warning! File has unsaved changes. Press Ctrl-Q or Ctrl-C again to quit.")
+				c.logger.Log("warning", "File has unsaved changes. Showing warning message.")
+
+				// デバッグメッセージを一時的にクリア（警告メッセージを確実に表示するため）
+				c.screen.ClearDebugMessage()
+
+				// 警告メッセージを設定
+				c.screen.SetMessage("Warning! File has unsaved changes. Press Ctrl-Q or Ctrl-C again to quit.")
+
+				// 画面を即座に更新して確実にメッセージを表示
+				if err := c.RefreshScreen(); err != nil {
+					c.logger.Log("error", fmt.Sprintf("Failed to refresh screen: %v", err))
+				}
+
+				// 0.1秒ウェイトを入れてメッセージを確実に表示
+				time.Sleep(100 * time.Millisecond)
+
 				return true, nil
 			}
 
 			// 終了処理を実行
 			c.logger.Log("system", "Shutting down editor")
-			close(c.Quit)
+
+			// チャネルが既に閉じられているか確認して安全に閉じる
+			if !c.isQuitChannelClosed() {
+				close(c.Quit)
+			} else {
+				c.logger.Log("warning", "Attempted to close an already closed quit channel")
+			}
+
 			return true, nil
 		}
 		return false, nil
@@ -99,6 +130,18 @@ func (c *Controller) registerEventHandlers() {
 	// イベントバスにハンドラーを登録
 	c.eventBus.Subscribe(saveHandler)
 	c.eventBus.Subscribe(quitHandler)
+}
+
+// isQuitChannelClosed はQuitチャネルが既に閉じられているかを非ブロッキングで確認します
+func (c *Controller) isQuitChannelClosed() bool {
+	select {
+	case <-c.Quit:
+		// チャネルから値を受信できた場合、チャネルは閉じられている
+		return true
+	default:
+		// デフォルトケースがあるため非ブロッキングで、チャネルはまだ閉じられていない
+		return false
+	}
 }
 
 // PublishSaveEvent は保存イベントを発行します
@@ -116,11 +159,17 @@ func (c *Controller) PublishQuitEvent(force bool) {
 func (c *Controller) RefreshScreen() error {
 	// UI更新の前にスクロール位置を更新
 	c.updateScroll()
+
+	// ファイル名のロギングを追加
+	filename := c.fileManager.GetFilename()
+	c.logger.Log("screen", fmt.Sprintf("Refreshing screen with filename: '%s'", filename))
+
 	// UIの更新処理を実行
-	err := c.screen.Redraw(c.contents, c.fileManager.GetFilename())
+	err := c.screen.Redraw(c.contents, filename)
 	if err != nil {
 		return err
 	}
+
 	// メッセージ表示後は即座にフラッシュする
 	return c.screen.Flush()
 }
@@ -181,7 +230,7 @@ func (c *Controller) updateScroll() {
 	c.screen.SetColOffset(offsetCol)
 }
 
-// ProcessKeypress はキー入力を処理する
+// Process はキー入力を処理する
 func (c *Controller) Process() error {
 	event, err := c.readEvent()
 	if err != nil {
@@ -209,9 +258,40 @@ func (c *Controller) Process() error {
 	return nil
 }
 
+// readEvent はイベントを読み取る
+func (c *Controller) readEvent() (key.KeyEvent, error) {
+	// バッファにイベントがある場合はそれを返す
+	if len(c.eventBuffer) > 0 {
+		event := c.eventBuffer[0]
+		c.eventBuffer = c.eventBuffer[1:]
+		return event, nil
+	}
+
+	event, remainingEvents, err := c.inputProvider.GetInputEvents()
+	if err != nil {
+		c.logger.Log("error", fmt.Sprintf("Keypress error: %v", err))
+		return key.KeyEvent{}, err
+	}
+
+	// 残りのイベントがある場合はバッファに追加
+	if len(remainingEvents) > 0 {
+		c.eventBuffer = append(c.eventBuffer, remainingEvents...)
+	}
+
+	return event, nil
+}
+
 // OpenFile は指定されたファイルを読み込む
 func (c *Controller) OpenFile(filename string) error {
-	return c.fileManager.OpenFile(filename)
+	c.logger.Log("file", fmt.Sprintf("Opening file: '%s'", filename))
+	err := c.fileManager.OpenFile(filename)
+	if err != nil {
+		c.logger.Log("error", fmt.Sprintf("Failed to open file: %v", err))
+		return err
+	}
+	c.logger.Log("file", fmt.Sprintf("File opened successfully: '%s', current filename from fileManager: '%s'",
+		filename, c.fileManager.GetFilename()))
+	return nil
 }
 
 func (c *Controller) insertChar(ch rune) {
@@ -288,28 +368,6 @@ func (c *Controller) setStatusMessage(format string, args ...interface{}) {
 
 	// 即座に画面を更新して変更を反映
 	c.RefreshScreen()
-}
-
-// readEvent はイベントを読み取る
-func (c *Controller) readEvent() (key.KeyEvent, error) {
-
-	// バッファにイベントがある場合はそれを返す
-	if len(c.eventBuffer) > 0 {
-		event := c.eventBuffer[0]
-		c.eventBuffer = c.eventBuffer[1:]
-		return event, nil
-	}
-	event, remainingEvents, err := c.inputProvider.GetInputEvents()
-	if err != nil {
-		c.logger.Log("error", fmt.Sprintf("Keypress error: %v", err))
-		return key.KeyEvent{}, err
-	}
-
-	// 残りのイベントがある場合はバッファに追加
-	if len(remainingEvents) > 0 {
-		c.eventBuffer = append(c.eventBuffer, remainingEvents...)
-	}
-	return event, nil
 }
 
 // createCommand はキーイベントからコマンドを作成する
@@ -413,7 +471,6 @@ func (c *Controller) createSpecialKeyCommand(k key.Key) command.Command {
 			return nil
 		}
 		return command.NewCommand(fn)
-
 	case key.KeyShiftTab:
 		fn := func() error {
 			c.logger.Log("edit", "Inserting shift-tab")
@@ -445,9 +502,6 @@ func (c *Controller) createSpecialKeyCommand(k key.Key) command.Command {
 			if spacesToDelete == 0 {
 				spacesToDelete = tabWidth
 			}
-
-			// カーソルを1つ左に移動し、削除を開始
-			// c.editor.MoveCursor(CursorLeft)
 
 			// スペースを削除
 			for i := 0; i < spacesToDelete; i++ {

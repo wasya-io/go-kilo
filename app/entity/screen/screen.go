@@ -90,6 +90,8 @@ func (s *Screen) GetColLines() int {
 
 // Redraw は画面を再描画する
 func (s *Screen) Redraw(buffer *contents.Contents, filename string) error {
+	isDirty := buffer.IsDirty()
+
 	// 既存のバッファをクリア
 	s.builder.Clear()
 
@@ -113,13 +115,20 @@ func (s *Screen) Redraw(buffer *contents.Contents, filename string) error {
 	}
 
 	// カーソル位置の設定（画面バッファに追加）
-	// cursor := ui.GetCursor() // Bufferからの直接参照をUI内部状態の参照に変更
 	pos := s.cursor.ToPosition()
 	screenX, screenY := s.getScreenPosition(pos.X, pos.Y, buffer, s.scrollOffset.y, s.scrollOffset.x)
 	s.builder.Write(fmt.Sprintf("\x1b[%d;%dH", screenY+1, screenX+1))
 
+	// デバッグ情報の設定（画面描画後）
+	s.debugMessage = contents.DebugMessage(fmt.Sprintf("RefreshScreen: isDirty=%v, filename=%s", isDirty, filename))
+
 	// バッファの内容を一括で画面に反映
-	return s.writer.Write(s.builder.Build())
+	err := s.writer.Write(s.builder.Build())
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // Flush は画面バッファを画面に反映する
@@ -130,6 +139,11 @@ func (s *Screen) Flush() error {
 // SetMessage はステータスメッセージを設定する
 func (s *Screen) SetMessage(format string, args ...interface{}) {
 	s.message.SetMessage(format, args...)
+}
+
+// ClearDebugMessage はデバッグメッセージをクリアする
+func (s *Screen) ClearDebugMessage() {
+	s.debugMessage = ""
 }
 
 // MoveCursor は指定された方向にカーソルを移動し、必要な更新をキューに追加する
@@ -233,24 +247,15 @@ func (s *Screen) drawMessageBar() error {
 	// 行をクリア
 	s.builder.Write(escape + clearLineSequence)
 
-	// デバッグメッセージがある場合は優先して表示
-	if s.debugMessage != "" {
-		s.builder.Write(string(s.debugMessage))
-		return nil
-	}
-
-	// メッセージを表示（5秒経過したら消去）
+	// ステータスメッセージがあれば最優先で表示
 	if s.message.Get() != "" && time.Now().Unix()-s.message.GetTime() < 5 {
+		// 警告メッセージは高優先度で表示
 		s.builder.Write(s.message.String())
-		// if len(s.message.Args) > 0 {
-		// 	fmt.Fprintf(&ui.buffer, ui.message, ui.messageArgs...)
-		// } else {
-		// 	ui.buffer.WriteString(ui.message)
-		// }
+	} else if s.debugMessage != "" {
+		// デバッグメッセージは通常メッセージがない場合のみ表示
+		s.builder.Write(s.debugMessage.String())
 	} else {
 		s.message.Clear()
-		// ui.message = ""
-		// ui.messageArgs = make([]interface{}, 0)
 	}
 
 	return nil
@@ -278,11 +283,22 @@ func (s *Screen) drawStatusBar(buffer *contents.Contents, filename string) error
 	if status == "" {
 		status = "[No Name]"
 	}
-	if buffer.IsDirty() {
+
+	isDirty := buffer.IsDirty()
+	if isDirty {
 		status += " [+]"
 	}
+
+	// ステータスバーの描画位置を明示的に設定
+	s.builder.Write(fmt.Sprintf("\x1b[%d;%dH", s.rowLines-2, 0))
+
+	// 反転表示（\x1b[7m）でステータスバーを描画
 	line := "\x1b[7m" + s.padLine(status) + "\x1b[m\r\n"
 	s.builder.Write(line)
+
+	// デバッグ情報をログに追加（ステータスバー描画後に設定）
+	s.debugMessage = contents.DebugMessage(fmt.Sprintf("StatusBar: filename=%s, isDirty=%v, fileStatus=%s", filename, isDirty, status))
+
 	return nil
 }
 

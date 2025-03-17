@@ -52,3 +52,7 @@ func (m *StandardMessage) Get() string {
 func (m *StandardMessage) GetTime() int64 {
 	return m.MessageTime
 }
+
+func (d DebugMessage) String() string {
+	return string(d)
+}
