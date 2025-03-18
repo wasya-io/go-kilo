@@ -424,12 +424,64 @@ func (c *Controller) createCommand(event key.KeyEvent) (command.Command, error) 
 				return command.NewCommand(fn), nil
 			}
 		} else if event.Key == key.KeyMouseClick {
-			// マウスクリックイベントは現時点では無視
-			c.logger.Log("mouse", fmt.Sprintf("Mouse click event: %v", event.MouseAction))
-			return nil, nil
+			// マウスクリックイベントを処理
+			switch event.MouseAction {
+			case key.MouseLeftClick:
+				fn := func() error {
+					c.logger.Log("mouse", fmt.Sprintf("Mouse left click at row: %d, col: %d", event.MouseRow, event.MouseCol))
+					c.handleMouseClick(event.MouseRow, event.MouseCol)
+					return nil
+				}
+				return command.NewCommand(fn), nil
+			}
+			c.logger.Log("mouse", fmt.Sprintf("Unhandled mouse click event: %v", event.MouseAction))
 		}
 	}
 	return nil, nil
+}
+
+// handleMouseClick はマウスクリックイベントを処理し、カーソルを移動します
+func (c *Controller) handleMouseClick(row, col int) {
+	// スクロールオフセットを考慮して、クリックされた画面上の位置をテキストバッファ上の位置に変換
+	offsetCol, offsetRow := c.screen.GetOffset()
+
+	// クリック位置にオフセットを加算して実際のテキスト位置を計算
+	bufferRow := row + offsetRow
+	bufferCol := col + offsetCol
+
+	// バッファの範囲内かチェック
+	if bufferRow >= c.contents.GetLineCount() {
+		bufferRow = c.contents.GetLineCount() - 1
+		if bufferRow < 0 {
+			bufferRow = 0
+		}
+	}
+
+	// 行を取得
+	targetRow := c.contents.GetRow(bufferRow)
+	if targetRow == nil {
+		return
+	}
+
+	// 画面上の列位置をバッファ内の文字位置（バイト位置）に変換
+	// この処理はタブ文字や全角文字を考慮する必要があります
+	bufferCol = targetRow.ScreenPositionToOffset(bufferCol)
+
+	// 行内の有効な位置にカーソルを制限
+	maxCol := targetRow.GetRuneCount()
+	if bufferCol > maxCol {
+		bufferCol = maxCol
+	}
+	if bufferCol < 0 {
+		bufferCol = 0
+	}
+
+	// カーソル位置を更新
+	c.logger.Log("cursor", fmt.Sprintf("Setting cursor to row: %d, col: %d", bufferRow, bufferCol))
+	c.screen.SetCursorPosition(bufferCol, bufferRow)
+
+	// スクロール位置を更新（カーソル位置に応じて画面をスクロール）
+	c.updateScroll()
 }
 
 // createSpecialKeyCommand は特殊キーに対応するコマンドを作成する
