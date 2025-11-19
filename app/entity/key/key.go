@@ -30,7 +30,7 @@ const (
 	KeyArrowRight
 	KeyBackspace
 	KeyEnter
-	KeyCtrlQ
+	KeyCtrlX
 	KeyCtrlC
 	KeyCtrlS
 	KeyEsc

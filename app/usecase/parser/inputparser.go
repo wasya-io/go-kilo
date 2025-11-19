@@ -51,8 +51,8 @@ func (p *StandardInputParser) parseControlKey(b byte) (key.KeyEvent, bool) {
 	switch b {
 	case 3: // Ctrl+C
 		return key.KeyEvent{Type: key.KeyEventControl, Key: key.KeyCtrlC}, true
-	case 17: // Ctrl+Q
-		return key.KeyEvent{Type: key.KeyEventControl, Key: key.KeyCtrlQ}, true
+	case 24: // Ctrl+X
+		return key.KeyEvent{Type: key.KeyEventControl, Key: key.KeyCtrlX}, true
 	case 19: // Ctrl-S
 		return key.KeyEvent{Type: key.KeyEventControl, Key: key.KeyCtrlS}, true
 	}

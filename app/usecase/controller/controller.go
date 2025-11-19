@@ -99,7 +99,7 @@ func (c *Controller) registerEventHandlers() {
 				c.screen.ClearDebugMessage()
 
 				// 警告メッセージを設定
-				c.screen.SetMessage("Warning! File has unsaved changes. Press Ctrl-Q or Ctrl-C again to quit.")
+				c.screen.SetMessage("Warning! File has unsaved changes. Press Ctrl-X or Ctrl-C again to quit.")
 
 				// 画面を即座に更新して確実にメッセージを表示
 				if err := c.RefreshScreen(); err != nil {
@@ -597,7 +597,7 @@ func (c *Controller) createControlKeyCommand(k key.Key) command.Command {
 			return nil
 		}
 		return command.NewCommand(fn)
-	case key.KeyCtrlQ, key.KeyCtrlC:
+	case key.KeyCtrlX, key.KeyCtrlC:
 		// 終了処理をイベントベースに変更
 		fn := func() error {
 			c.logger.Log("command", "Quitting")
