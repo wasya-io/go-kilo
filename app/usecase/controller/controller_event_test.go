@@ -1,6 +1,7 @@
 package controller_test
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -17,7 +18,7 @@ import (
 )
 
 // テスト用のセットアップ
-func setupController(t *testing.T) (*controller.Controller, *filemanager.MockFileManager, *event.Bus) {
+func setupController(t *testing.T) (*controller.Controller, *filemanager.MockFileManager, *writer.MockScreenWriter, *event.Bus) {
 	ctrl := gomock.NewController(t)
 
 	// モックの作成
@@ -37,8 +38,7 @@ func setupController(t *testing.T) (*controller.Controller, *filemanager.MockFil
 	mockLogger.EXPECT().Flush().AnyTimes()
 	mockLogger.EXPECT().ReadyWithType(gomock.Any()).Return(mockLogEntry).AnyTimes()
 
-	// Writerのスタブ設定
-	mockWriter.EXPECT().Write(gomock.Any()).Return(nil).AnyTimes()
+	// Writerのスタブ設定は各テストで行う
 
 	// 実際のコンテンツオブジェクトを作成
 	c := contents.NewContents(mockLogger)
@@ -70,17 +70,40 @@ func setupController(t *testing.T) (*controller.Controller, *filemanager.MockFil
 		eventBus,
 	)
 
-	return controller, mockFileManager, eventBus
+	return controller, mockFileManager, mockWriter, eventBus
 }
 
 // 保存イベントのテスト
 func TestSaveEventHandling(t *testing.T) {
-	ctrl, mockFM, eventBus := setupController(t)
+	ctrl, mockFM, mockWriter, eventBus := setupController(t)
 	defer eventBus.Shutdown()
 
 	// 期待値の設定
 	mockFM.EXPECT().HandleSaveRequest().Return(nil)
 	mockFM.EXPECT().GetFilename().Return("test.txt").AnyTimes()
+	// 画面更新が行われる
+	mockWriter.EXPECT().Write(gomock.Any()).Return(nil).AnyTimes()
+
+	// 保存イベントを発行
+	ctrl.PublishSaveEvent("test.txt", false)
+
+	// ハンドラーが非同期で処理するのを待つ
+	time.Sleep(50 * time.Millisecond)
+}
+
+// 保存イベントのエラーハンドリングテスト
+func TestSaveEventHandlingError(t *testing.T) {
+	ctrl, mockFM, mockWriter, eventBus := setupController(t)
+	defer eventBus.Shutdown()
+
+	// 期待値の設定
+	// 保存リクエストがエラーを返す
+	mockFM.EXPECT().HandleSaveRequest().Return(fmt.Errorf("save failed"))
+	mockFM.EXPECT().GetFilename().Return("test.txt").AnyTimes()
+
+	// エラーメッセージが表示されるため、画面更新が行われることを確認
+	// 最低1回はWriteが呼ばれるはず
+	mockWriter.EXPECT().Write(gomock.Any()).Return(nil).MinTimes(1)
 
 	// 保存イベントを発行
 	ctrl.PublishSaveEvent("test.txt", false)
@@ -91,7 +114,7 @@ func TestSaveEventHandling(t *testing.T) {
 
 // 終了イベントのテスト (クリーンな場合はすぐに終了)
 func TestQuitEventHandlingClean(t *testing.T) {
-	ctrl, _, eventBus := setupController(t)
+	ctrl, _, _, eventBus := setupController(t)
 	defer eventBus.Shutdown()
 
 	// 終了イベントの処理をモニタリングするためのゴルーチン
@@ -117,11 +140,13 @@ func TestQuitEventHandlingClean(t *testing.T) {
 
 // 終了イベントのテスト (ダーティな場合は警告メッセージ)
 func TestQuitEventHandlingDirty(t *testing.T) {
-	ctrl, mockFM, eventBus := setupController(t)
+	ctrl, mockFM, mockWriter, eventBus := setupController(t)
 	defer eventBus.Shutdown()
 
 	// GetFilenameが呼ばれる可能性があるためスタブ設定
 	mockFM.EXPECT().GetFilename().Return("test.txt").AnyTimes()
+	// 警告表示などで画面更新が行われる
+	mockWriter.EXPECT().Write(gomock.Any()).Return(nil).AnyTimes()
 
 	// コンテンツを直接ダーティに設定
 	ctrl.GetContents().SetDirty(true)
@@ -176,9 +201,39 @@ func TestQuitEventHandlingDirty(t *testing.T) {
 	}
 }
 
+// 終了イベントのテスト (ダーティ時の警告表示確認)
+func TestQuitEventHandlingDirtyWarning(t *testing.T) {
+	ctrl, mockFM, mockWriter, eventBus := setupController(t)
+	defer eventBus.Shutdown()
+
+	// GetFilenameが呼ばれる可能性があるためスタブ設定
+	mockFM.EXPECT().GetFilename().Return("test.txt").AnyTimes()
+
+	// コンテンツを直接ダーティに設定
+	ctrl.GetContents().SetDirty(true)
+
+	// 警告メッセージ表示のためにWriteが呼ばれることを確認
+	// 最低1回はWriteが呼ばれるはず
+	mockWriter.EXPECT().Write(gomock.Any()).Return(nil).MinTimes(1)
+
+	// 終了イベントを発行
+	ctrl.PublishQuitEvent(false)
+
+	// 非同期処理待ち
+	time.Sleep(50 * time.Millisecond)
+
+	// Quitチャネルが閉じられていないことを確認
+	select {
+	case <-ctrl.Quit:
+		t.Error("Quit channel should not be closed")
+	default:
+		// OK
+	}
+}
+
 // 強制終了イベントのテスト (ダーティでも終了)
 func TestForceQuitEventHandling(t *testing.T) {
-	ctrl, _, eventBus := setupController(t)
+	ctrl, _, _, eventBus := setupController(t)
 	defer eventBus.Shutdown()
 
 	// コンテンツを直接ダーティに設定
