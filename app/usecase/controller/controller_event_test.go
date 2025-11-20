@@ -6,11 +6,11 @@ import (
 	"time"
 
 	"github.com/golang/mock/gomock"
-	"github.com/wasya-io/go-kilo/app/boundary/filemanager"
-	"github.com/wasya-io/go-kilo/app/boundary/provider/input"
-	"github.com/wasya-io/go-kilo/app/boundary/writer"
+	mock_filemanager "github.com/wasya-io/go-kilo/app/boundary/filemanager/mock"
+	mock_input "github.com/wasya-io/go-kilo/app/boundary/provider/input/mock"
+	mock_writer "github.com/wasya-io/go-kilo/app/boundary/writer/mock"
 	"github.com/wasya-io/go-kilo/app/entity/contents"
-	"github.com/wasya-io/go-kilo/app/entity/core"
+	mock_core "github.com/wasya-io/go-kilo/app/entity/core/mock"
 	"github.com/wasya-io/go-kilo/app/entity/cursor"
 	"github.com/wasya-io/go-kilo/app/entity/event"
 	"github.com/wasya-io/go-kilo/app/entity/screen"
@@ -18,17 +18,17 @@ import (
 )
 
 // テスト用のセットアップ
-func setupController(t *testing.T) (*controller.Controller, *filemanager.MockFileManager, *writer.MockScreenWriter, *event.Bus) {
+func setupController(t *testing.T) (*controller.Controller, *mock_filemanager.MockFileManager, *mock_writer.MockScreenWriter, *event.Bus) {
 	ctrl := gomock.NewController(t)
 
 	// モックの作成
-	mockLogger := core.NewMockLogger(ctrl)
-	mockFileManager := filemanager.NewMockFileManager(ctrl)
-	mockInputProvider := input.NewMockProvider(ctrl)
-	mockWriter := writer.NewMockScreenWriter(ctrl)
+	mockLogger := mock_core.NewMockLogger(ctrl)
+	mockFileManager := mock_filemanager.NewMockFileManager(ctrl)
+	mockInputProvider := mock_input.NewMockProvider(ctrl)
+	mockWriter := mock_writer.NewMockScreenWriter(ctrl)
 
 	// ロガーのスタブ設定
-	mockLogEntry := core.NewMockLogEntry(ctrl)
+	mockLogEntry := mock_core.NewMockLogEntry(ctrl)
 	mockLogEntry.EXPECT().WithType().Return(mockLogEntry).AnyTimes()
 	mockLogEntry.EXPECT().WithString().Return(mockLogEntry).AnyTimes()
 	mockLogEntry.EXPECT().WithInt().Return(mockLogEntry).AnyTimes()

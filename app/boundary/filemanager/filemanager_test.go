@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/golang/mock/gomock"
+	mock_filemanager "github.com/wasya-io/go-kilo/app/boundary/filemanager/mock"
 )
 
 func TestFileManager_OpenFile_FileNotExists(t *testing.T) {
@@ -13,7 +14,7 @@ func TestFileManager_OpenFile_FileNotExists(t *testing.T) {
 	defer ctrl.Finish()
 
 	// モックFileManagerの作成
-	mock := NewMockFileManager(ctrl)
+	mock := mock_filemanager.NewMockFileManager(ctrl)
 
 	// 存在しないファイルを開こうとしたときの振る舞いを設定
 	nonExistentFile := "non_existent_file.txt"
