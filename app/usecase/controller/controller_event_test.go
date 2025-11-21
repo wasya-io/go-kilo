@@ -79,7 +79,8 @@ func TestSaveEventHandling(t *testing.T) {
 	defer eventBus.Shutdown()
 
 	// 期待値の設定
-	mockFM.EXPECT().HandleSaveRequest().Return(nil)
+	// 期待値の設定
+	mockFM.EXPECT().SaveFile("test.txt", gomock.Any()).Return(nil)
 	mockFM.EXPECT().GetFilename().Return("test.txt").AnyTimes()
 	// 画面更新が行われる
 	mockWriter.EXPECT().Write(gomock.Any()).Return(nil).AnyTimes()
@@ -98,7 +99,8 @@ func TestSaveEventHandlingError(t *testing.T) {
 
 	// 期待値の設定
 	// 保存リクエストがエラーを返す
-	mockFM.EXPECT().HandleSaveRequest().Return(fmt.Errorf("save failed"))
+	// 保存リクエストがエラーを返す
+	mockFM.EXPECT().SaveFile("test.txt", gomock.Any()).Return(fmt.Errorf("save failed"))
 	mockFM.EXPECT().GetFilename().Return("test.txt").AnyTimes()
 
 	// エラーメッセージが表示されるため、画面更新が行われることを確認

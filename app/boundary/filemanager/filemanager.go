@@ -73,6 +73,9 @@ func (fm *StandardFileManager) SaveFile(filename string, content []string) error
 		fm.buffer.SetDirty(false)
 	}
 
+	// 保存に成功したら、管理しているファイル名を更新する
+	fm.filename = filename
+
 	return nil
 }
 

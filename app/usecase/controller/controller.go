@@ -68,7 +68,9 @@ func (c *Controller) registerEventHandlers() {
 		if saveEvent, ok := e.Payload.(event.SaveEvent); ok {
 			c.logger.Log("event", fmt.Sprintf("Save event received: %s", saveEvent.Filename))
 			c.setStatusMessage("Saving...")
-			err := c.fileManager.HandleSaveRequest()
+			// イベントから渡されたファイル名を使用して保存
+			// これにより、"Save As"で指定された新しいファイル名が使用される
+			err := c.fileManager.SaveFile(saveEvent.Filename, c.contents.GetAllLines())
 			if err != nil {
 				c.setStatusMessage("Error saving file: %v", err)
 				return false, err
@@ -592,8 +594,20 @@ func (c *Controller) createControlKeyCommand(k key.Key) command.Command {
 	case key.KeyCtrlS:
 		// 保存処理をイベントベースに変更
 		fn := func() error {
+			filename := c.fileManager.GetFilename()
+			if filename == "" {
+				var err error
+				filename, err = c.prompt("Save as: ")
+				if err != nil {
+					return err
+				}
+				if filename == "" {
+					c.setStatusMessage("Save aborted")
+					return nil
+				}
+			}
 			c.logger.Log("command", "Saving file")
-			c.PublishSaveEvent(c.fileManager.GetFilename(), false)
+			c.PublishSaveEvent(filename, false)
 			return nil
 		}
 		return command.NewCommand(fn)
@@ -607,5 +621,46 @@ func (c *Controller) createControlKeyCommand(k key.Key) command.Command {
 		return command.NewCommand(fn)
 	default:
 		return nil
+	}
+}
+
+// prompt はユーザーに入力を求める
+func (c *Controller) prompt(prompt string) (string, error) {
+	c.setStatusMessage(prompt)
+
+	var input []rune
+	for {
+		event, err := c.readEvent()
+		if err != nil {
+			return "", err
+		}
+
+		switch event.Type {
+		case key.KeyEventChar:
+			input = append(input, event.Rune)
+			c.setStatusMessage(prompt + string(input))
+		case key.KeyEventSpecial:
+			switch event.Key {
+			case key.KeyEnter:
+				if len(input) > 0 {
+					c.setStatusMessage("")
+					return string(input), nil
+				}
+			case key.KeyBackspace:
+				if len(input) > 0 {
+					input = input[:len(input)-1]
+					c.setStatusMessage(prompt + string(input))
+				}
+			case key.KeyEsc:
+				c.setStatusMessage("")
+				return "", nil
+			}
+		case key.KeyEventControl:
+			// コントロールキー（Ctrl+Cなど）が押された場合はキャンセル扱い
+			if event.Key == key.KeyCtrlC || event.Key == key.KeyCtrlX {
+				c.setStatusMessage("")
+				return "", nil
+			}
+		}
 	}
 }
