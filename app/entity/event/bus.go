@@ -16,6 +16,7 @@ type Bus struct {
 	cancel         context.CancelFunc
 	wg             sync.WaitGroup
 	defaultHandler Handler
+	synchronous    bool
 }
 
 // NewBus は新しいイベントバスを作成します。
@@ -60,8 +61,25 @@ func (b *Bus) SetDefaultHandler(handler Handler) {
 	b.defaultHandler = handler
 }
 
+// SetSynchronous はイベントバスの同期モードを設定します。
+// テスト用：trueの場合、Publishはイベントを即座に処理します。
+func (b *Bus) SetSynchronous(sync bool) {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+	b.synchronous = sync
+}
+
 // Publish はイベントをバスに発行します。
 func (b *Bus) Publish(event Event) {
+	b.mutex.RLock()
+	isSync := b.synchronous
+	b.mutex.RUnlock()
+
+	if isSync {
+		b.dispatchEvent(event)
+		return
+	}
+
 	select {
 	case b.eventChan <- event:
 		// イベントが送信された

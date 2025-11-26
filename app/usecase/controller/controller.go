@@ -132,6 +132,39 @@ func (c *Controller) registerEventHandlers() {
 	// イベントバスにハンドラーを登録
 	c.eventBus.Subscribe(saveHandler)
 	c.eventBus.Subscribe(quitHandler)
+	c.eventBus.Subscribe(c.createCursorHandler())
+	c.eventBus.Subscribe(c.createBufferHandler())
+}
+
+func (c *Controller) createCursorHandler() event.Handler {
+	return event.NewSingleTypeHandler(event.TypeCursor, func(e event.Event) (bool, error) {
+		if cursorEvent, ok := e.Payload.(event.CursorEvent); ok {
+			c.logger.Log("cursor", fmt.Sprintf("Handling cursor event: %v", cursorEvent.Action))
+			c.screen.MoveCursor(cursorEvent.Action, c.contents)
+			c.updateScroll()
+			return true, nil
+		}
+		return false, nil
+	})
+}
+
+func (c *Controller) createBufferHandler() event.Handler {
+	return event.NewSingleTypeHandler(event.TypeBuffer, func(e event.Event) (bool, error) {
+		if bufferEvent, ok := e.Payload.(event.BufferEvent); ok {
+			c.logger.Log("buffer", fmt.Sprintf("Handling buffer event: %v", bufferEvent.Action))
+			switch bufferEvent.Action {
+			case event.BufferInsert:
+				c.performInsertChar(bufferEvent.Rune)
+			case event.BufferDelete:
+				c.performDeleteChar()
+			case event.BufferNewline:
+				c.performInsertNewline()
+			}
+			c.RefreshScreen()
+			return true, nil
+		}
+		return false, nil
+	})
 }
 
 // isQuitChannelClosed はQuitチャネルが既に閉じられているかを非ブロッキングで確認します
@@ -303,14 +336,21 @@ func (c *Controller) OpenFile(filename string) error {
 }
 
 func (c *Controller) insertChar(ch rune) {
+	c.eventBus.Publish(event.NewBufferEvent(event.BufferInsert, ch))
+}
+
+func (c *Controller) performInsertChar(ch rune) {
 	pos := c.screen.GetCursor().ToPosition()
 	c.contents.InsertChar(contents.Position{X: pos.X, Y: pos.Y}, ch)
 	// カーソルを1つ進める
 	c.screen.SetCursorPosition(pos.X+1, pos.Y)
-	c.RefreshScreen()
 }
 
 func (c *Controller) deleteChar() {
+	c.eventBus.Publish(event.NewBufferEvent(event.BufferDelete, 0))
+}
+
+func (c *Controller) performDeleteChar() {
 	c.logger.Log("edit", "Deleting character")
 	pos := c.screen.GetCursor().ToPosition()
 
@@ -327,18 +367,18 @@ func (c *Controller) deleteChar() {
 			c.screen.SetCursorPosition(targetX, pos.Y-1) // 前の行の末尾へ移動
 		}
 	}
-
-	c.RefreshScreen()
 }
 
 func (c *Controller) moveCursor(movement cursor.Movement) {
-	c.logger.Log("cursor", fmt.Sprintf("Moving cursor: %v", movement))
-	// Buffer直接操作からUI経由に変更
-	c.screen.MoveCursor(movement, c.contents)
-	c.updateScroll()
+	c.logger.Log("cursor", fmt.Sprintf("Publishing cursor event: %v", movement))
+	c.eventBus.Publish(event.NewCursorEvent(movement))
 }
 
 func (c *Controller) insertNewline() {
+	c.eventBus.Publish(event.NewBufferEvent(event.BufferNewline, 0))
+}
+
+func (c *Controller) performInsertNewline() {
 	c.logger.Log("edit", "Inserting newline")
 	cursor := c.screen.GetCursor()
 	pos := cursor.ToPosition()
@@ -370,7 +410,6 @@ func (c *Controller) insertNewline() {
 	c.screen.SetCursorPosition(indentSize, pos.Y+1)
 
 	c.updateScroll()
-	c.RefreshScreen()
 }
 
 // setStatusMessage はステータスメッセージを設定する（非公開メソッド）

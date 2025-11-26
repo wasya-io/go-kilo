@@ -28,6 +28,7 @@ func TestController_Process(t *testing.T) {
 	mockWriter := mock_writer.NewMockScreenWriter(ctrl)
 	mockBuilder := mock_contents.NewMockBuilder(ctrl)
 	mockEventBus := event.NewBus()
+	mockEventBus.SetSynchronous(true)
 
 	// 基本的な依存関係のセットアップ
 	c := contents.NewContents(mockLogger)
@@ -79,32 +80,28 @@ func TestController_EditorOperations(t *testing.T) {
 	mockLogger := mock_core.NewMockLogger(ctrl)
 	mockWriter := mock_writer.NewMockScreenWriter(ctrl)
 	mockBuilder := mock_contents.NewMockBuilder(ctrl)
-	mockEventBus := event.NewBus()
-
-	c := contents.NewContents(mockLogger)
-	cur := cursor.NewCursor()
-	msg := contents.NewMessage("")
-	scr := screen.NewScreen(mockBuilder, mockWriter, msg, cur, 24, 80)
-
-	controller := NewController(scr, c, mockFileManager, mockInputProvider, mockLogger, mockEventBus)
 
 	// 操作によって呼び出される RefreshScreen の共通モックをセットアップする
 	mockFileManager.EXPECT().GetFilename().Return("test.txt").AnyTimes()
 	mockLogger.EXPECT().Log(gomock.Any(), gomock.Any()).AnyTimes()
-	mockBuilder.EXPECT().Clear().AnyTimes()
-	mockBuilder.EXPECT().Write(gomock.Any()).AnyTimes()
-	mockBuilder.EXPECT().Build().Return("").AnyTimes()
-	mockWriter.EXPECT().Write(gomock.Any()).Return(nil).AnyTimes()
 
 	t.Run("InsertChar", func(t *testing.T) {
-		// コンテンツをリセットする
-		c = contents.NewContents(mockLogger)
-		controller = NewController(scr, c, mockFileManager, mockInputProvider, mockLogger, mockEventBus)
-		// 必要に応じて依存関係を再注入するか、参照を保持している場合はコントローラーをそのまま使用する
+		// セットアップ
+		mockEventBus := event.NewBus()
+		mockEventBus.SetSynchronous(true)
+		c := contents.NewContents(mockLogger)
+		cur := cursor.NewCursor()
+		msg := contents.NewMessage("")
+		scr := screen.NewScreen(mockBuilder, mockWriter, msg, cur, 24, 80)
+		controller := NewController(scr, c, mockFileManager, mockInputProvider, mockLogger, mockEventBus)
 
-		// プライベートメソッドにアクセスするか、Process 経由でトリガーする必要がある。
-		// 特定の操作をテストしたいがそれらはプライベートであるため、
-		// 特定のイベントを使用してパブリックな Process メソッド経由でテストできる。
+		// RefreshScreen のモック
+		mockFileManager.EXPECT().GetFilename().Return("test.txt").AnyTimes()
+		mockLogger.EXPECT().Log(gomock.Any(), gomock.Any()).AnyTimes()
+		mockBuilder.EXPECT().Clear().AnyTimes()
+		mockBuilder.EXPECT().Write(gomock.Any()).AnyTimes()
+		mockBuilder.EXPECT().Build().Return("").AnyTimes()
+		mockWriter.EXPECT().Write(gomock.Any()).Return(nil).AnyTimes()
 
 		// 'a' キー押下をシミュレートする
 		mockInputProvider.EXPECT().GetInputEvents().Return(key.KeyEvent{Type: key.KeyEventChar, Rune: 'a'}, nil, nil)
@@ -115,6 +112,23 @@ func TestController_EditorOperations(t *testing.T) {
 	})
 
 	t.Run("InsertNewline", func(t *testing.T) {
+		// セットアップ
+		mockEventBus := event.NewBus()
+		mockEventBus.SetSynchronous(true)
+		c := contents.NewContents(mockLogger)
+		cur := cursor.NewCursor()
+		msg := contents.NewMessage("")
+		scr := screen.NewScreen(mockBuilder, mockWriter, msg, cur, 24, 80)
+		controller := NewController(scr, c, mockFileManager, mockInputProvider, mockLogger, mockEventBus)
+
+		// RefreshScreen のモック
+		mockFileManager.EXPECT().GetFilename().Return("test.txt").AnyTimes()
+		mockLogger.EXPECT().Log(gomock.Any(), gomock.Any()).AnyTimes()
+		mockBuilder.EXPECT().Clear().AnyTimes()
+		mockBuilder.EXPECT().Write(gomock.Any()).AnyTimes()
+		mockBuilder.EXPECT().Build().Return("").AnyTimes()
+		mockWriter.EXPECT().Write(gomock.Any()).Return(nil).AnyTimes()
+
 		// Enter キーをシミュレートする
 		mockInputProvider.EXPECT().GetInputEvents().Return(key.KeyEvent{Type: key.KeyEventSpecial, Key: key.KeyEnter}, nil, nil)
 		err := controller.Process()
@@ -125,16 +139,53 @@ func TestController_EditorOperations(t *testing.T) {
 	})
 
 	t.Run("DeleteChar", func(t *testing.T) {
+		// セットアップ
+		mockEventBus := event.NewBus()
+		mockEventBus.SetSynchronous(true)
+		c := contents.NewContents(mockLogger)
+		c.LoadContent([]string{"a"}) // 初期状態: "a"
+		cur := cursor.NewCursor()
+		cur.SetCursor(1, 0) // カーソルは "a" の後ろ
+		msg := contents.NewMessage("")
+		scr := screen.NewScreen(mockBuilder, mockWriter, msg, cur, 24, 80)
+		controller := NewController(scr, c, mockFileManager, mockInputProvider, mockLogger, mockEventBus)
+
+		// RefreshScreen のモック
+		mockFileManager.EXPECT().GetFilename().Return("test.txt").AnyTimes()
+		mockLogger.EXPECT().Log(gomock.Any(), gomock.Any()).AnyTimes()
+		mockBuilder.EXPECT().Clear().AnyTimes()
+		mockBuilder.EXPECT().Write(gomock.Any()).AnyTimes()
+		mockBuilder.EXPECT().Build().Return("").AnyTimes()
+		mockWriter.EXPECT().Write(gomock.Any()).Return(nil).AnyTimes()
+
 		// Backspace をシミュレートする
 		mockInputProvider.EXPECT().GetInputEvents().Return(key.KeyEvent{Type: key.KeyEventSpecial, Key: key.KeyBackspace}, nil, nil)
 		err := controller.Process()
 		assert.NoError(t, err)
 		// 行が結合されるべき
 		assert.Equal(t, 1, len(c.GetAllLines()))
-		assert.Equal(t, "a", c.GetAllLines()[0])
+		assert.Equal(t, "", c.GetAllLines()[0])
 	})
 
 	t.Run("MoveCursor", func(t *testing.T) {
+		// セットアップ
+		mockEventBus := event.NewBus()
+		mockEventBus.SetSynchronous(true)
+		c := contents.NewContents(mockLogger)
+		c.LoadContent([]string{"abc"})
+		cur := cursor.NewCursor()
+		msg := contents.NewMessage("")
+		scr := screen.NewScreen(mockBuilder, mockWriter, msg, cur, 24, 80)
+		controller := NewController(scr, c, mockFileManager, mockInputProvider, mockLogger, mockEventBus)
+
+		// RefreshScreen のモック
+		mockFileManager.EXPECT().GetFilename().Return("test.txt").AnyTimes()
+		mockLogger.EXPECT().Log(gomock.Any(), gomock.Any()).AnyTimes()
+		mockBuilder.EXPECT().Clear().AnyTimes()
+		mockBuilder.EXPECT().Write(gomock.Any()).AnyTimes()
+		mockBuilder.EXPECT().Build().Return("").AnyTimes()
+		mockWriter.EXPECT().Write(gomock.Any()).Return(nil).AnyTimes()
+
 		// 左に移動
 		mockInputProvider.EXPECT().GetInputEvents().Return(key.KeyEvent{Type: key.KeyEventSpecial, Key: key.KeyArrowLeft}, nil, nil)
 		err := controller.Process()
@@ -159,6 +210,7 @@ func TestController_Prompt(t *testing.T) {
 	mockWriter := mock_writer.NewMockScreenWriter(ctrl)
 	mockBuilder := mock_contents.NewMockBuilder(ctrl)
 	mockEventBus := event.NewBus()
+	mockEventBus.SetSynchronous(true)
 
 	c := contents.NewContents(mockLogger)
 	cur := cursor.NewCursor()
@@ -235,6 +287,7 @@ func TestController_MouseClick(t *testing.T) {
 	mockWriter := mock_writer.NewMockScreenWriter(ctrl)
 	mockBuilder := mock_contents.NewMockBuilder(ctrl)
 	mockEventBus := event.NewBus()
+	mockEventBus.SetSynchronous(true)
 
 	c := contents.NewContents(mockLogger)
 	c.LoadContent([]string{"Hello", "World"})
@@ -279,6 +332,7 @@ func TestController_OpenFile(t *testing.T) {
 	mockWriter := mock_writer.NewMockScreenWriter(ctrl)
 	mockBuilder := mock_contents.NewMockBuilder(ctrl)
 	mockEventBus := event.NewBus()
+	mockEventBus.SetSynchronous(true)
 
 	c := contents.NewContents(mockLogger)
 	cur := cursor.NewCursor()
@@ -304,14 +358,6 @@ func TestController_SpecialKeys(t *testing.T) {
 	mockLogger := mock_core.NewMockLogger(ctrl)
 	mockWriter := mock_writer.NewMockScreenWriter(ctrl)
 	mockBuilder := mock_contents.NewMockBuilder(ctrl)
-	mockEventBus := event.NewBus()
-
-	c := contents.NewContents(mockLogger)
-	cur := cursor.NewCursor()
-	msg := contents.NewMessage("")
-	scr := screen.NewScreen(mockBuilder, mockWriter, msg, cur, 24, 80)
-
-	controller := NewController(scr, c, mockFileManager, mockInputProvider, mockLogger, mockEventBus)
 
 	// RefreshScreen のモック
 	mockFileManager.EXPECT().GetFilename().Return("test.txt").AnyTimes()
@@ -322,6 +368,23 @@ func TestController_SpecialKeys(t *testing.T) {
 	mockWriter.EXPECT().Write(gomock.Any()).Return(nil).AnyTimes()
 
 	t.Run("Tab", func(t *testing.T) {
+		// セットアップ
+		mockEventBus := event.NewBus()
+		mockEventBus.SetSynchronous(true)
+		c := contents.NewContents(mockLogger)
+		cur := cursor.NewCursor()
+		msg := contents.NewMessage("")
+		scr := screen.NewScreen(mockBuilder, mockWriter, msg, cur, 24, 80)
+		controller := NewController(scr, c, mockFileManager, mockInputProvider, mockLogger, mockEventBus)
+
+		// RefreshScreen のモック
+		mockFileManager.EXPECT().GetFilename().Return("test.txt").AnyTimes()
+		mockLogger.EXPECT().Log(gomock.Any(), gomock.Any()).AnyTimes()
+		mockBuilder.EXPECT().Clear().AnyTimes()
+		mockBuilder.EXPECT().Write(gomock.Any()).AnyTimes()
+		mockBuilder.EXPECT().Build().Return("").AnyTimes()
+		mockWriter.EXPECT().Write(gomock.Any()).Return(nil).AnyTimes()
+
 		mockInputProvider.EXPECT().GetInputEvents().Return(key.KeyEvent{Type: key.KeyEventSpecial, Key: key.KeyTab}, nil, nil)
 		err := controller.Process()
 		assert.NoError(t, err)
@@ -331,13 +394,24 @@ func TestController_SpecialKeys(t *testing.T) {
 	})
 
 	t.Run("ShiftTab", func(t *testing.T) {
-		// インデント付きのコンテンツをリセットしてセットアップする
-		c = contents.NewContents(mockLogger)
+		// セットアップ
+		mockEventBus := event.NewBus()
+		mockEventBus.SetSynchronous(true)
+		c := contents.NewContents(mockLogger)
 		c.LoadContent([]string{"    indent"})
-		cur = cursor.NewCursor()
+		cur := cursor.NewCursor()
 		cur.SetCursor(4, 0) // インデント後のカーソル
-		scr = screen.NewScreen(mockBuilder, mockWriter, msg, cur, 24, 80)
-		controller = NewController(scr, c, mockFileManager, mockInputProvider, mockLogger, mockEventBus)
+		msg := contents.NewMessage("")
+		scr := screen.NewScreen(mockBuilder, mockWriter, msg, cur, 24, 80)
+		controller := NewController(scr, c, mockFileManager, mockInputProvider, mockLogger, mockEventBus)
+
+		// RefreshScreen のモック
+		mockFileManager.EXPECT().GetFilename().Return("test.txt").AnyTimes()
+		mockLogger.EXPECT().Log(gomock.Any(), gomock.Any()).AnyTimes()
+		mockBuilder.EXPECT().Clear().AnyTimes()
+		mockBuilder.EXPECT().Write(gomock.Any()).AnyTimes()
+		mockBuilder.EXPECT().Build().Return("").AnyTimes()
+		mockWriter.EXPECT().Write(gomock.Any()).Return(nil).AnyTimes()
 
 		mockInputProvider.EXPECT().GetInputEvents().Return(key.KeyEvent{Type: key.KeyEventSpecial, Key: key.KeyShiftTab}, nil, nil)
 		err := controller.Process()
@@ -357,21 +431,6 @@ func TestController_MouseWheel(t *testing.T) {
 	mockLogger := mock_core.NewMockLogger(ctrl)
 	mockWriter := mock_writer.NewMockScreenWriter(ctrl)
 	mockBuilder := mock_contents.NewMockBuilder(ctrl)
-	mockEventBus := event.NewBus()
-
-	c := contents.NewContents(mockLogger)
-	// スクロールするのに十分な行を追加する
-	lines := make([]string, 50)
-	for i := range lines {
-		lines[i] = "line"
-	}
-	c.LoadContent(lines)
-
-	cur := cursor.NewCursor()
-	msg := contents.NewMessage("")
-	scr := screen.NewScreen(mockBuilder, mockWriter, msg, cur, 24, 80)
-
-	controller := NewController(scr, c, mockFileManager, mockInputProvider, mockLogger, mockEventBus)
 
 	// RefreshScreen のモック
 	mockFileManager.EXPECT().GetFilename().Return("test.txt").AnyTimes()
@@ -382,6 +441,28 @@ func TestController_MouseWheel(t *testing.T) {
 	mockWriter.EXPECT().Write(gomock.Any()).Return(nil).AnyTimes()
 
 	t.Run("ScrollDown", func(t *testing.T) {
+		// セットアップ
+		mockEventBus := event.NewBus()
+		mockEventBus.SetSynchronous(true)
+		c := contents.NewContents(mockLogger)
+		lines := make([]string, 50)
+		for i := range lines {
+			lines[i] = "line"
+		}
+		c.LoadContent(lines)
+		cur := cursor.NewCursor()
+		msg := contents.NewMessage("")
+		scr := screen.NewScreen(mockBuilder, mockWriter, msg, cur, 24, 80)
+		controller := NewController(scr, c, mockFileManager, mockInputProvider, mockLogger, mockEventBus)
+
+		// RefreshScreen のモック
+		mockFileManager.EXPECT().GetFilename().Return("test.txt").AnyTimes()
+		mockLogger.EXPECT().Log(gomock.Any(), gomock.Any()).AnyTimes()
+		mockBuilder.EXPECT().Clear().AnyTimes()
+		mockBuilder.EXPECT().Write(gomock.Any()).AnyTimes()
+		mockBuilder.EXPECT().Build().Return("").AnyTimes()
+		mockWriter.EXPECT().Write(gomock.Any()).Return(nil).AnyTimes()
+
 		mockInputProvider.EXPECT().GetInputEvents().Return(key.KeyEvent{
 			Type:        key.KeyEventMouse,
 			Key:         key.KeyMouseWheel,
@@ -395,6 +476,29 @@ func TestController_MouseWheel(t *testing.T) {
 	})
 
 	t.Run("ScrollUp", func(t *testing.T) {
+		// セットアップ
+		mockEventBus := event.NewBus()
+		mockEventBus.SetSynchronous(true)
+		c := contents.NewContents(mockLogger)
+		lines := make([]string, 50)
+		for i := range lines {
+			lines[i] = "line"
+		}
+		c.LoadContent(lines)
+		cur := cursor.NewCursor()
+		cur.SetCursor(0, 3) // 初期位置
+		msg := contents.NewMessage("")
+		scr := screen.NewScreen(mockBuilder, mockWriter, msg, cur, 24, 80)
+		controller := NewController(scr, c, mockFileManager, mockInputProvider, mockLogger, mockEventBus)
+
+		// RefreshScreen のモック
+		mockFileManager.EXPECT().GetFilename().Return("test.txt").AnyTimes()
+		mockLogger.EXPECT().Log(gomock.Any(), gomock.Any()).AnyTimes()
+		mockBuilder.EXPECT().Clear().AnyTimes()
+		mockBuilder.EXPECT().Write(gomock.Any()).AnyTimes()
+		mockBuilder.EXPECT().Build().Return("").AnyTimes()
+		mockWriter.EXPECT().Write(gomock.Any()).Return(nil).AnyTimes()
+
 		mockInputProvider.EXPECT().GetInputEvents().Return(key.KeyEvent{
 			Type:        key.KeyEventMouse,
 			Key:         key.KeyMouseWheel,
@@ -418,6 +522,7 @@ func TestController_Quit(t *testing.T) {
 	mockWriter := mock_writer.NewMockScreenWriter(ctrl)
 	mockBuilder := mock_contents.NewMockBuilder(ctrl)
 	mockEventBus := event.NewBus()
+	mockEventBus.SetSynchronous(true)
 
 	c := contents.NewContents(mockLogger)
 	cur := cursor.NewCursor()
@@ -464,6 +569,7 @@ func TestController_InputBuffer(t *testing.T) {
 	mockWriter := mock_writer.NewMockScreenWriter(ctrl)
 	mockBuilder := mock_contents.NewMockBuilder(ctrl)
 	mockEventBus := event.NewBus()
+	mockEventBus.SetSynchronous(true)
 
 	c := contents.NewContents(mockLogger)
 	cur := cursor.NewCursor()

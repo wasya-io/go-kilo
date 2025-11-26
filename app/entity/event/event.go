@@ -1,5 +1,6 @@
-// event パッケージはアプリケーション内でのイベント処理を定義します。
 package event
+
+import "github.com/wasya-io/go-kilo/app/entity/cursor"
 
 // EventType はイベントの種類を表す型です。
 type EventType string
@@ -10,6 +11,8 @@ const (
 	TypeQuit     EventType = "quit"     // 終了イベント
 	TypeInput    EventType = "input"    // 入力イベント
 	TypeRefresh  EventType = "refresh"  // 画面更新イベント
+	TypeCursor   EventType = "cursor"   // カーソルイベント
+	TypeBuffer   EventType = "buffer"   // バッファイベント
 	TypeCommand  EventType = "command"  // コマンド実行イベント
 	TypeResponse EventType = "response" // 応答イベント
 )
@@ -29,6 +32,26 @@ type SaveEvent struct {
 // QuitEvent は終了イベントのペイロードを表します。
 type QuitEvent struct {
 	Force bool // 強制終了するかどうか
+}
+
+// CursorEvent はカーソルイベントのペイロードを表します。
+type CursorEvent struct {
+	Action cursor.Movement // カーソル移動アクション
+}
+
+// BufferAction はバッファ操作の種類を表します。
+type BufferAction int
+
+const (
+	BufferInsert BufferAction = iota
+	BufferDelete
+	BufferNewline
+)
+
+// BufferEvent はバッファイベントのペイロードを表します。
+type BufferEvent struct {
+	Action BufferAction
+	Rune   rune
 }
 
 // ResponseEvent はコマンド応答イベントのペイロードを表します。
@@ -58,6 +81,21 @@ func NewSaveEvent(filename string, force bool) Event {
 func NewQuitEvent(force bool) Event {
 	return NewEvent(TypeQuit, QuitEvent{
 		Force: force,
+	})
+}
+
+// NewCursorEvent は新しいカーソルイベントを作成します。
+func NewCursorEvent(action cursor.Movement) Event {
+	return NewEvent(TypeCursor, CursorEvent{
+		Action: action,
+	})
+}
+
+// NewBufferEvent は新しいバッファイベントを作成します。
+func NewBufferEvent(action BufferAction, r rune) Event {
+	return NewEvent(TypeBuffer, BufferEvent{
+		Action: action,
+		Rune:   r,
 	})
 }
 
