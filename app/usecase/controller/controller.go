@@ -142,6 +142,7 @@ func (c *Controller) createCursorHandler() event.Handler {
 			c.logger.Log("cursor", fmt.Sprintf("Handling cursor event: %v", cursorEvent.Action))
 			c.screen.MoveCursor(cursorEvent.Action, c.contents)
 			c.updateScroll()
+			c.RefreshScreen()
 			return true, nil
 		}
 		return false, nil
@@ -284,9 +285,6 @@ func (c *Controller) Process() error {
 	if err != nil {
 		return err
 	}
-
-	// 画面更新を必ず行う（コマンドの有無に関わらず）
-	defer c.RefreshScreen()
 
 	if command != nil {
 		// コマンドを実行
@@ -523,6 +521,7 @@ func (c *Controller) handleMouseClick(row, col int) {
 
 	// スクロール位置を更新（カーソル位置に応じて画面をスクロール）
 	c.updateScroll()
+	c.RefreshScreen()
 }
 
 // createSpecialKeyCommand は特殊キーに対応するコマンドを作成する
