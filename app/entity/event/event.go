@@ -37,6 +37,8 @@ type QuitEvent struct {
 // CursorEvent はカーソルイベントのペイロードを表します。
 type CursorEvent struct {
 	Action cursor.Movement // カーソル移動アクション
+	Row    int             // CursorSetの場合の行位置
+	Col    int             // CursorSetの場合の列位置
 }
 
 // BufferAction はバッファ操作の種類を表します。
@@ -69,6 +71,11 @@ func NewEvent(eventType EventType, payload interface{}) Event {
 	}
 }
 
+// NewRefreshEvent は新しい画面更新イベントを作成します。
+func NewRefreshEvent() Event {
+	return NewEvent(TypeRefresh, nil)
+}
+
 // NewSaveEvent は新しい保存イベントを作成します。
 func NewSaveEvent(filename string, force bool) Event {
 	return NewEvent(TypeSave, SaveEvent{
@@ -88,6 +95,15 @@ func NewQuitEvent(force bool) Event {
 func NewCursorEvent(action cursor.Movement) Event {
 	return NewEvent(TypeCursor, CursorEvent{
 		Action: action,
+	})
+}
+
+// NewCursorSetEvent は新しいカーソル位置指定イベントを作成します。
+func NewCursorSetEvent(row, col int) Event {
+	return NewEvent(TypeCursor, CursorEvent{
+		Action: cursor.CursorSet,
+		Row:    row,
+		Col:    col,
 	})
 }
 

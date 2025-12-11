@@ -119,14 +119,15 @@ func TestQuitEventHandlingClean(t *testing.T) {
 	ctrl, _, _, eventBus := setupController(t)
 	defer eventBus.Shutdown()
 
-	// 終了イベントの処理をモニタリングするためのゴルーチン
-	quitReceived := false
+	// 終了イベントの処理をモニタリングするためのチャネル
+	quitReceivedChan := make(chan bool)
 	go func() {
 		select {
 		case <-ctrl.Quit:
-			quitReceived = true
+			quitReceivedChan <- true
 		case <-time.After(100 * time.Millisecond):
 			// タイムアウト
+			quitReceivedChan <- false
 		}
 	}()
 
@@ -134,8 +135,7 @@ func TestQuitEventHandlingClean(t *testing.T) {
 	ctrl.PublishQuitEvent(false)
 
 	// 終了シグナルを受け取ったことを確認
-	time.Sleep(50 * time.Millisecond)
-	if !quitReceived {
+	if !<-quitReceivedChan {
 		t.Error("Quit channel was not closed")
 	}
 }

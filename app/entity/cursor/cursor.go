@@ -36,6 +36,7 @@ const (
 	CursorLeft     Movement = 'D'
 	MouseWheelUp   Movement = 'U' // マウスホイールでの上方向スクロール
 	MouseWheelDown Movement = 'V' // マウスホイールでの下方向スクロール
+	CursorSet      Movement = 'S' // カーソル位置の直接指定
 )
 
 func newPosition(x, y int) position {

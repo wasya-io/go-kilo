@@ -134,15 +134,20 @@ func (c *Controller) registerEventHandlers() {
 	c.eventBus.Subscribe(quitHandler)
 	c.eventBus.Subscribe(c.createCursorHandler())
 	c.eventBus.Subscribe(c.createBufferHandler())
+	c.eventBus.Subscribe(c.createRefreshHandler())
 }
 
 func (c *Controller) createCursorHandler() event.Handler {
 	return event.NewSingleTypeHandler(event.TypeCursor, func(e event.Event) (bool, error) {
 		if cursorEvent, ok := e.Payload.(event.CursorEvent); ok {
 			c.logger.Log("cursor", fmt.Sprintf("Handling cursor event: %v", cursorEvent.Action))
-			c.screen.MoveCursor(cursorEvent.Action, c.contents)
+			if cursorEvent.Action == cursor.CursorSet {
+				c.screen.SetCursorPosition(cursorEvent.Col, cursorEvent.Row)
+			} else {
+				c.screen.MoveCursor(cursorEvent.Action, c.contents)
+			}
 			c.updateScroll()
-			c.RefreshScreen()
+			c.eventBus.Publish(event.NewRefreshEvent())
 			return true, nil
 		}
 		return false, nil
@@ -161,10 +166,24 @@ func (c *Controller) createBufferHandler() event.Handler {
 			case event.BufferNewline:
 				c.performInsertNewline()
 			}
-			c.RefreshScreen()
+			c.eventBus.Publish(event.NewRefreshEvent())
 			return true, nil
 		}
 		return false, nil
+	})
+}
+
+func (c *Controller) createRefreshHandler() event.Handler {
+	return event.NewSingleTypeHandler(event.TypeRefresh, func(e event.Event) (bool, error) {
+		// チャネルに他のイベントが溜まっているか確認したいが、
+		// 現状のEventBusの実装ではチャネルの長さを確認できない。
+		// Phase 2では単純にRefreshScreenを呼び出すだけにする（イベント経由にすること自体が第一歩）。
+		// 完全なデバウンスはPhase 3以降で検討する。
+		// ただし、イベントとして独立したことで、メインループとは非同期に処理されるようになる。
+
+		c.logger.Log("screen", "Handling refresh event")
+		c.RefreshScreen()
+		return true, nil
 	})
 }
 
@@ -418,8 +437,8 @@ func (c *Controller) setStatusMessage(format string, args ...interface{}) {
 	// UIコンポーネントのSetMessageメソッドを呼び出す
 	c.screen.SetMessage(format, args...)
 
-	// 即座に画面を更新して変更を反映
-	c.RefreshScreen()
+	// 即座に画面を更新して変更を反映（イベント経由）
+	c.eventBus.Publish(event.NewRefreshEvent())
 }
 
 // createCommand はキーイベントからコマンドを作成する
@@ -515,13 +534,9 @@ func (c *Controller) handleMouseClick(row, col int) {
 		bufferCol = 0
 	}
 
-	// カーソル位置を更新
-	c.logger.Log("cursor", fmt.Sprintf("Setting cursor to row: %d, col: %d", bufferRow, bufferCol))
-	c.screen.SetCursorPosition(bufferCol, bufferRow)
-
-	// スクロール位置を更新（カーソル位置に応じて画面をスクロール）
-	c.updateScroll()
-	c.RefreshScreen()
+	// カーソル位置を更新（イベントを発行）
+	c.logger.Log("cursor", fmt.Sprintf("Publishing cursor set event to row: %d, col: %d", bufferRow, bufferCol))
+	c.eventBus.Publish(event.NewCursorSetEvent(bufferRow, bufferCol))
 }
 
 // createSpecialKeyCommand は特殊キーに対応するコマンドを作成する

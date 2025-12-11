@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -48,7 +49,10 @@ func TestController_QuitWarning(t *testing.T) {
 
 	// Capture builder writes to verify warning message
 	var capturedOutput string
+	var outputMutex sync.Mutex
 	mockBuilder.EXPECT().Write(gomock.Any()).DoAndReturn(func(s string) {
+		outputMutex.Lock()
+		defer outputMutex.Unlock()
 		capturedOutput += s
 	}).AnyTimes()
 
@@ -68,12 +72,16 @@ func TestController_QuitWarning(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Verify warning message is present in output
+	outputMutex.Lock()
 	if !assert.Contains(t, capturedOutput, "Warning! File has unsaved changes") {
 		t.Logf("Captured output: %s", capturedOutput)
 	}
+	outputMutex.Unlock()
 
 	// Reset output for next step
+	outputMutex.Lock()
 	capturedOutput = ""
+	outputMutex.Unlock()
 
 	// Check Quit channel
 	select {

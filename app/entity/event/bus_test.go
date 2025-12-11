@@ -55,24 +55,22 @@ func TestBusBasicPublishSubscribe(t *testing.T) {
 	defer bus.Shutdown()
 
 	// テストハンドラーの作成
-	saveHandled := false
-	saveHandler := newTestHandler(
+	handler := newTestHandler(
 		[]event.EventType{event.TypeSave},
 		func(e event.Event) (bool, error) {
-			saveHandled = true
 			return true, nil
 		},
 	)
 
 	// ハンドラーを登録
-	bus.Subscribe(saveHandler)
+	bus.Subscribe(handler)
 
 	// イベントを発行
 	bus.Publish(event.NewSaveEvent("test.txt", false))
 
 	// ハンドラーが呼ばれたことを確認
 	time.Sleep(50 * time.Millisecond) // 非同期処理を待つ
-	if !saveHandled {
+	if !handler.WasCalled() {
 		t.Error("Save handler was not called")
 	}
 }
@@ -114,11 +112,9 @@ func TestBusDefaultHandler(t *testing.T) {
 	bus := event.NewBus()
 	defer bus.Shutdown()
 
-	defaultHandlerCalled := false
 	defaultHandler := newTestHandler(
 		[]event.EventType{event.TypeInput}, // このハンドラーはTypeInputのみ処理
 		func(e event.Event) (bool, error) {
-			defaultHandlerCalled = true
 			return true, nil
 		},
 	)
@@ -131,7 +127,7 @@ func TestBusDefaultHandler(t *testing.T) {
 
 	// デフォルトハンドラーが呼ばれたことを確認
 	time.Sleep(50 * time.Millisecond) // 非同期処理を待つ
-	if !defaultHandlerCalled {
+	if !defaultHandler.WasCalled() {
 		t.Error("Default handler was not called")
 	}
 }
