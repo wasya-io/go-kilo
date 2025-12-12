@@ -205,10 +205,14 @@ func (c *Controller) PublishSaveEvent(filename string, force bool) {
 	c.eventBus.Publish(event.NewSaveEvent(filename, force))
 }
 
-// PublishQuitEvent は終了イベントを発行します
 func (c *Controller) PublishQuitEvent(force bool) {
 	c.logger.Log("event", fmt.Sprintf("Publishing quit event, force=%v", force))
-	c.eventBus.Publish(event.NewQuitEvent(force))
+	// 終了イベントは同期的に処理し、チャネルが閉じられるのを待つ
+	// これにより、メインループが誤って次の入力待ちに入るのを防ぐ
+	_, err := c.eventBus.PublishAndWaitResponse(event.NewQuitEvent(force))
+	if err != nil {
+		c.logger.Log("error", fmt.Sprintf("Failed to publish quit event: %v", err))
+	}
 }
 
 func (c *Controller) RefreshScreen() error {
@@ -445,6 +449,11 @@ func (c *Controller) setStatusMessage(format string, args ...interface{}) {
 func (c *Controller) createCommand(event key.KeyEvent) (command.Command, error) {
 	switch event.Type {
 	case key.KeyEventChar, key.KeyEventSpecial:
+		// Rune=0 は無視する（無効なイベントやファントムイベントの可能性）
+		if event.Type == key.KeyEventChar && event.Rune == 0 {
+			return nil, nil
+		}
+
 		// 警告状態をクリア
 		if c.quitWarningShown {
 			c.quitWarningShown = false
