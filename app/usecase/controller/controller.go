@@ -453,6 +453,10 @@ func (c *Controller) createCommand(event key.KeyEvent) (command.Command, error) 
 		if event.Type == key.KeyEventChar && event.Rune == 0 {
 			return nil, nil
 		}
+		// 無効な特殊キーイベントも無視する
+		if event.Type == key.KeyEventSpecial && event.Key == key.KeyNone {
+			return nil, nil
+		}
 
 		// 警告状態をクリア
 		if c.quitWarningShown {

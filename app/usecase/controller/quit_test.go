@@ -66,10 +66,9 @@ func TestController_QuitSequence(t *testing.T) {
 	// Wait for async processing
 	time.Sleep(200 * time.Millisecond)
 
-	// INJECT PHANTOM EVENT (Rune = 0)
-	// This simulates the suspected bug cause
-	// Keeping this to ensure robustness, but focusing on the race condition now.
-	mockInputProvider.EXPECT().GetInputEvents().Return(key.KeyEvent{Type: key.KeyEventChar, Rune: 0}, nil, nil)
+	// INJECT PHANTOM EVENT (Special Key = None/0)
+	// This simulates the suspected bug cause where a non-mapped special event resets the flag
+	mockInputProvider.EXPECT().GetInputEvents().Return(key.KeyEvent{Type: key.KeyEventSpecial, Key: key.KeyNone}, nil, nil)
 	err = controller.Process()
 	assert.NoError(t, err)
 
