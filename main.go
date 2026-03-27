@@ -14,8 +14,8 @@ func main() {
 		if r := recover(); r != nil {
 			// TODO: dieと統合できそう。どちらのエスケープシーケンスが正しいのか精査して改善する
 			// 端末をリセットするエスケープシーケンス
-			fmt.Print("\x1b[?1000l\x1b[?1002l\x1b[?1015l\x1b[?1006l") // マウスモードを無効化
-			fmt.Print("\x1b[2J\x1b[H")                                // 画面をクリア
+			fmt.Print("\x1b[?1049l\x1b[?1000l\x1b[?1002l\x1b[?1015l\x1b[?1006l") // 代替バッファ・マウスモードを無効化
+			fmt.Print("\x1b[2J\x1b[H")                                        // 画面をクリア
 			fmt.Print("\x1b[?25h")                                    // カーソルを表示
 
 			// エラー情報を出力
@@ -57,8 +57,9 @@ func main() {
 }
 
 func die(err error) {
-	fmt.Print("\x1b[2J") // 画面をクリア
-	fmt.Print("\x1b[H")  // カーソルを左上に移動
+	fmt.Print("\x1b[?1049l\x1b[?1000l\x1b[?1002l\x1b[?1015l\x1b[?1006l") // 代替バッファ・マウスモードを無効化
+	fmt.Print("\x1b[2J")                                                // 画面をクリア
+	fmt.Print("\x1b[H")                                                 // カーソルを左上に移動
 	fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 	os.Exit(1)
 }

@@ -132,10 +132,6 @@ func (e *Editor) Cleanup() {
 
 		// クリーンアップ処理の完了を通知
 		close(e.cleanupChan)
-
-		// その他のクリーンアップ処理
-		os.Stdout.WriteString(e.screen.ClearScreen())
-		os.Stdout.WriteString(e.screen.MoveCursorToHome())
 	})
 }
 

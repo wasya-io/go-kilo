@@ -43,8 +43,8 @@ func InitTerminal() error {
 	term.Cc[unix.VTIME] = 1
 	term.Cc[unix.VMIN] = 1
 
-	// マウスサポートを有効化
-	if _, err := os.Stdout.WriteString("\x1b[?1000h\x1b[?1002h\x1b[?1015h\x1b[?1006h"); err != nil {
+	// 代替画面バッファとマウスサポートを有効化
+	if _, err := os.Stdout.WriteString("\x1b[?1049h\x1b[?1000h\x1b[?1002h\x1b[?1015h\x1b[?1006h"); err != nil {
 		return err
 	}
 
@@ -95,8 +95,8 @@ func EnableRawMode() (*TerminalState, error) {
 
 // disableRawMode は端末の設定を元の状態に戻す
 func (term *TerminalState) DisableRawMode() error {
-	// マウスサポートを無効化
-	os.Stdout.WriteString("\x1b[?1000l\x1b[?1002l\x1b[?1015l\x1b[?1006l")
+	// 代替画面バッファとマウスサポートを無効化
+	os.Stdout.WriteString("\x1b[?1049l\x1b[?1000l\x1b[?1002l\x1b[?1015l\x1b[?1006l")
 
 	if term.origTermios != nil {
 		if err := unix.IoctlSetTermios(int(os.Stdin.Fd()), unix.TCSETS, term.origTermios); err != nil {

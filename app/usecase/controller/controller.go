@@ -13,7 +13,6 @@ import (
 	"github.com/wasya-io/go-kilo/app/entity/event"
 	"github.com/wasya-io/go-kilo/app/entity/key"
 	"github.com/wasya-io/go-kilo/app/entity/screen"
-	"github.com/wasya-io/go-kilo/app/usecase/command"
 )
 
 type Controller struct {
@@ -303,21 +302,8 @@ func (c *Controller) Process() error {
 		return err
 	}
 
-	// コマンドを作成
-	command, err := c.createCommand(event)
-	if err != nil {
-		return err
-	}
-
-	if command != nil {
-		// コマンドを実行
-		c.logger.Log("command", fmt.Sprintf("Executed command: %T", command))
-		if err := command.Execute(); err != nil {
-			return err
-		}
-	}
-
-	return nil
+	// キーイベントを直接処理
+	return c.handleKeyEvent(event)
 }
 
 // readEvent はイベントを読み取る
@@ -445,13 +431,13 @@ func (c *Controller) setStatusMessage(format string, args ...interface{}) {
 	c.eventBus.Publish(event.NewRefreshEvent())
 }
 
-// createCommand はキーイベントからコマンドを作成する
-func (c *Controller) createCommand(event key.KeyEvent) (command.Command, error) {
+// handleKeyEvent はキーイベントを処理してイベントバスに発行する
+func (c *Controller) handleKeyEvent(event key.KeyEvent) error {
 	switch event.Type {
 	case key.KeyEventChar, key.KeyEventSpecial:
 		// Rune=0 は無視する（無効なイベントやファントムイベントの可能性）
 		if event.Type == key.KeyEventChar && event.Rune == 0 {
-			return nil, nil
+			return nil
 		}
 
 		// 警告状態をクリア
@@ -459,52 +445,44 @@ func (c *Controller) createCommand(event key.KeyEvent) (command.Command, error) 
 			c.quitWarningShown = false
 			c.setStatusMessage("")
 		}
+		
 		if event.Type == key.KeyEventChar {
-			fn := func(r rune) error {
-				c.insertChar(r)
-				return nil
-			}
-			return command.NewInsertCharCommand(event.Rune, fn), nil
+			c.logger.Log("input", fmt.Sprintf("Handling char event: %c", event.Rune))
+			c.insertChar(event.Rune)
+			return nil
 		}
-		return c.createSpecialKeyCommand(event.Key), nil
+		return c.handleSpecialKey(event.Key)
+
 	case key.KeyEventControl:
-		return c.createControlKeyCommand(event.Key), nil
+		return c.handleControlKey(event.Key)
+
 	case key.KeyEventMouse:
 		if event.Key == key.KeyMouseWheel {
 			// マウスホイールイベントは専用のカーソル移動コマンドを使用
 			switch event.MouseAction {
 			case key.MouseScrollUp:
-				fn := func() error {
-					c.logger.Log("cursor", "Moving cursor up")
-					c.moveCursor(cursor.MouseWheelUp)
-					c.updateScroll()
-					return nil
-				}
-				return command.NewCommand(fn), nil
+				c.logger.Log("cursor", "Moving cursor up")
+				c.moveCursor(cursor.MouseWheelUp)
+				c.updateScroll()
+				return nil
 			case key.MouseScrollDown:
-				fn := func() error {
-					c.logger.Log("cursor", "Moving cursor down")
-					c.moveCursor(cursor.MouseWheelDown)
-					c.updateScroll()
-					return nil
-				}
-				return command.NewCommand(fn), nil
+				c.logger.Log("cursor", "Moving cursor down")
+				c.moveCursor(cursor.MouseWheelDown)
+				c.updateScroll()
+				return nil
 			}
 		} else if event.Key == key.KeyMouseClick {
 			// マウスクリックイベントを処理
 			switch event.MouseAction {
 			case key.MouseLeftClick:
-				fn := func() error {
-					c.logger.Log("mouse", fmt.Sprintf("Mouse left click at row: %d, col: %d", event.MouseRow, event.MouseCol))
-					c.handleMouseClick(event.MouseRow, event.MouseCol)
-					return nil
-				}
-				return command.NewCommand(fn), nil
+				c.logger.Log("mouse", fmt.Sprintf("Mouse left click at row: %d, col: %d", event.MouseRow, event.MouseCol))
+				c.handleMouseClick(event.MouseRow, event.MouseCol)
+				return nil
 			}
 			c.logger.Log("mouse", fmt.Sprintf("Unhandled mouse click event: %v", event.MouseAction))
 		}
 	}
-	return nil, nil
+	return nil
 }
 
 // handleMouseClick はマウスクリックイベントを処理し、カーソルを移動します
@@ -548,142 +526,99 @@ func (c *Controller) handleMouseClick(row, col int) {
 	c.eventBus.Publish(event.NewCursorSetEvent(bufferRow, bufferCol))
 }
 
-// createSpecialKeyCommand は特殊キーに対応するコマンドを作成する
-func (c *Controller) createSpecialKeyCommand(k key.Key) command.Command {
+// handleSpecialKey は特殊キーを処理する
+func (c *Controller) handleSpecialKey(k key.Key) error {
 	switch k {
 	case key.KeyArrowLeft:
-		fn := func() error {
-			c.moveCursor(cursor.CursorLeft)
-			return nil
-		}
-		return command.NewCommand(fn)
+		c.moveCursor(cursor.CursorLeft)
 	case key.KeyArrowRight:
-		fn := func() error {
-			c.moveCursor(cursor.CursorRight)
-			return nil
-		}
-		return command.NewCommand(fn)
+		c.moveCursor(cursor.CursorRight)
 	case key.KeyArrowUp:
-		fn := func() error {
-			c.moveCursor(cursor.CursorUp)
-			return nil
-		}
-		return command.NewCommand(fn)
+		c.moveCursor(cursor.CursorUp)
 	case key.KeyArrowDown:
-		fn := func() error {
-			c.moveCursor(cursor.CursorDown)
-			return nil
-		}
-		return command.NewCommand(fn)
+		c.moveCursor(cursor.CursorDown)
 	case key.KeyBackspace:
-		fn := func() error {
-			c.logger.Log("edit", "Deleting character")
-			c.deleteChar()
-			return nil
-		}
-		return command.NewCommand(fn)
+		c.logger.Log("edit", "Deleting character")
+		c.deleteChar()
 	case key.KeyEnter:
-		fn := func() error {
-			c.logger.Log("edit", "Inserting newline")
-			c.insertNewline()
-			return nil
-		}
-		return command.NewCommand(fn)
+		c.logger.Log("edit", "Inserting newline")
+		c.insertNewline()
 	case key.KeyTab:
-		fn := func() error {
-			c.logger.Log("edit", "Inserting tab")
-			// タブは空白に展開
-			tabWidth := config.GetTabWidth()
-			for i := 0; i < tabWidth; i++ {
-				c.insertChar(' ')
-			}
-			return nil
+		c.logger.Log("edit", "Inserting tab")
+		// タブは空白に展開
+		tabWidth := config.GetTabWidth()
+		for i := 0; i < tabWidth; i++ {
+			c.insertChar(' ')
 		}
-		return command.NewCommand(fn)
 	case key.KeyShiftTab:
-		fn := func() error {
-			c.logger.Log("edit", "Inserting shift-tab")
-			cur := c.screen.GetCursor()
-			pos := cur.ToPosition()
-			content := c.contents.GetContentLine(pos.Y)
+		c.logger.Log("edit", "Inserting shift-tab")
+		cur := c.screen.GetCursor()
+		pos := cur.ToPosition()
+		content := c.contents.GetContentLine(pos.Y)
 
-			// カーソルが行頭にある場合は処理を行わない
-			if pos.X <= 0 {
-				return nil
-			}
-
-			// カーソル位置の左側のスペース数を数える
-			leftSpaces := 0
-			for i := pos.X - 1; i >= 0; i-- {
-				if content[i] != ' ' {
-					break
-				}
-				leftSpaces++
-			}
-
-			if leftSpaces == 0 {
-				return nil // 左側にスペースがない場合は何もしない
-			}
-
-			// 削除するスペース数を計算
-			tabWidth := config.GetTabWidth()
-			spacesToDelete := leftSpaces % tabWidth
-			if spacesToDelete == 0 {
-				spacesToDelete = tabWidth
-			}
-
-			// スペースを削除
-			for i := 0; i < spacesToDelete; i++ {
-				c.deleteChar()
-			}
-
-			// 残りのカーソル移動
-			for i := 1; i < (spacesToDelete - 1); i++ {
-				c.moveCursor(cursor.CursorLeft)
-			}
-
+		// カーソルが行頭にある場合は処理を行わない
+		if pos.X <= 0 {
 			return nil
 		}
-		return command.NewCommand(fn)
-	default:
-		return nil
+
+		// カーソル位置の左側のスペース数を数える
+		leftSpaces := 0
+		for i := pos.X - 1; i >= 0; i-- {
+			if content[i] != ' ' {
+				break
+			}
+			leftSpaces++
+		}
+
+		if leftSpaces == 0 {
+			return nil // 左側にスペースがない場合は何もしない
+		}
+
+		// 削除するスペース数を計算
+		tabWidth := config.GetTabWidth()
+		spacesToDelete := leftSpaces % tabWidth
+		if spacesToDelete == 0 {
+			spacesToDelete = tabWidth
+		}
+
+		// スペースを削除
+		for i := 0; i < spacesToDelete; i++ {
+			c.deleteChar()
+		}
+
+		// 残りのカーソル移動
+		for i := 1; i < (spacesToDelete - 1); i++ {
+			c.moveCursor(cursor.CursorLeft)
+		}
 	}
+	return nil
 }
 
-// createControlKeyCommand はコントロールキーに対応するコマンドを作成する
-func (c *Controller) createControlKeyCommand(k key.Key) command.Command {
+// handleControlKey はコントロールキーを処理する
+func (c *Controller) handleControlKey(k key.Key) error {
 	switch k {
 	case key.KeyCtrlS:
-		// 保存処理をイベントベースに変更
-		fn := func() error {
-			filename := c.fileManager.GetFilename()
-			if filename == "" {
-				var err error
-				filename, err = c.prompt("Save as: ")
-				if err != nil {
-					return err
-				}
-				if filename == "" {
-					c.setStatusMessage("Save aborted")
-					return nil
-				}
+		// 保存処理
+		filename := c.fileManager.GetFilename()
+		if filename == "" {
+			var err error
+			filename, err = c.prompt("Save as: ")
+			if err != nil {
+				return err
 			}
-			c.logger.Log("command", "Saving file")
-			c.PublishSaveEvent(filename, false)
-			return nil
+			if filename == "" {
+				c.setStatusMessage("Save aborted")
+				return nil
+			}
 		}
-		return command.NewCommand(fn)
+		c.logger.Log("event", "Saving file")
+		c.PublishSaveEvent(filename, false)
 	case key.KeyCtrlX, key.KeyCtrlC:
-		// 終了処理をイベントベースに変更
-		fn := func() error {
-			c.logger.Log("command", "Quitting")
-			c.PublishQuitEvent(false)
-			return nil
-		}
-		return command.NewCommand(fn)
-	default:
-		return nil
+		// 終了処理
+		c.logger.Log("event", "Quitting")
+		c.PublishQuitEvent(false)
 	}
+	return nil
 }
 
 // prompt はユーザーに入力を求める
