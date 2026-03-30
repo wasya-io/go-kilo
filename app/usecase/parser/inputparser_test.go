@@ -115,3 +115,29 @@ func TestStandardInputParser_ParseJapaneseString(t *testing.T) {
 		t.Errorf("unexpected event: %v", events)
 	}
 }
+
+func TestStandardInputParser_ParseLargeJapaneseString(t *testing.T) {
+	logger := logger.New(true)
+	parser := NewStandardInputParser(logger)
+	
+	// 25文字の日本語（75バイト -> 32バイト制限を超える）
+	inputStr := "アイウエオアイウエオアイウエオアイウエオアイウエオ"
+	buf := []byte(inputStr)
+	n := len(buf)
+	events, err := parser.Parse(buf, n)
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	
+	if len(events) != 25 {
+		t.Errorf("expected 25 events, got %d", len(events))
+	}
+	
+	// 先頭、中間、末尾などのサンプリングで文字を確認
+	if len(events) > 0 && events[0].Rune != 'ア' {
+		t.Errorf("expected first char to be 'ア', got %c", events[0].Rune)
+	}
+	if len(events) >= 25 && events[24].Rune != 'オ' {
+		t.Errorf("expected last char to be 'オ', got %c", events[24].Rune)
+	}
+}

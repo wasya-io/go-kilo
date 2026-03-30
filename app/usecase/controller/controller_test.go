@@ -37,6 +37,7 @@ func TestController_Process(t *testing.T) {
 	scr := screen.NewScreen(mockBuilder, mockWriter, msg, cur, 24, 80)
 
 	controller := NewController(scr, c, mockFileManager, mockInputProvider, mockLogger, mockEventBus)
+	controller.SetRefreshDelay(0)
 
 	// Process のモック期待値
 	// 1. readEvent は GetInputEvents を呼び出す
@@ -94,6 +95,7 @@ func TestController_EditorOperations(t *testing.T) {
 		msg := contents.NewMessage("")
 		scr := screen.NewScreen(mockBuilder, mockWriter, msg, cur, 24, 80)
 		controller := NewController(scr, c, mockFileManager, mockInputProvider, mockLogger, mockEventBus)
+	controller.SetRefreshDelay(0)
 
 		// RefreshScreen のモック
 		mockFileManager.EXPECT().GetFilename().Return("test.txt").AnyTimes()
@@ -120,6 +122,7 @@ func TestController_EditorOperations(t *testing.T) {
 		msg := contents.NewMessage("")
 		scr := screen.NewScreen(mockBuilder, mockWriter, msg, cur, 24, 80)
 		controller := NewController(scr, c, mockFileManager, mockInputProvider, mockLogger, mockEventBus)
+	controller.SetRefreshDelay(0)
 
 		// RefreshScreen のモック
 		mockFileManager.EXPECT().GetFilename().Return("test.txt").AnyTimes()
@@ -149,6 +152,7 @@ func TestController_EditorOperations(t *testing.T) {
 		msg := contents.NewMessage("")
 		scr := screen.NewScreen(mockBuilder, mockWriter, msg, cur, 24, 80)
 		controller := NewController(scr, c, mockFileManager, mockInputProvider, mockLogger, mockEventBus)
+	controller.SetRefreshDelay(0)
 
 		// RefreshScreen のモック
 		mockFileManager.EXPECT().GetFilename().Return("test.txt").AnyTimes()
@@ -177,6 +181,7 @@ func TestController_EditorOperations(t *testing.T) {
 		msg := contents.NewMessage("")
 		scr := screen.NewScreen(mockBuilder, mockWriter, msg, cur, 24, 80)
 		controller := NewController(scr, c, mockFileManager, mockInputProvider, mockLogger, mockEventBus)
+	controller.SetRefreshDelay(0)
 
 		// RefreshScreen のモック
 		mockFileManager.EXPECT().GetFilename().Return("test.txt").AnyTimes()
@@ -218,6 +223,7 @@ func TestController_Prompt(t *testing.T) {
 	scr := screen.NewScreen(mockBuilder, mockWriter, msg, cur, 24, 80)
 
 	controller := NewController(scr, c, mockFileManager, mockInputProvider, mockLogger, mockEventBus)
+	controller.SetRefreshDelay(0)
 
 	// プロンプト更新中に呼び出される RefreshScreen のモック
 	mockFileManager.EXPECT().GetFilename().Return("").AnyTimes()
@@ -296,6 +302,7 @@ func TestController_MouseClick(t *testing.T) {
 	scr := screen.NewScreen(mockBuilder, mockWriter, msg, cur, 24, 80)
 
 	controller := NewController(scr, c, mockFileManager, mockInputProvider, mockLogger, mockEventBus)
+	controller.SetRefreshDelay(0)
 
 	// RefreshScreen のモック
 	mockFileManager.EXPECT().GetFilename().Return("test.txt").AnyTimes()
@@ -340,6 +347,7 @@ func TestController_OpenFile(t *testing.T) {
 	scr := screen.NewScreen(mockBuilder, mockWriter, msg, cur, 24, 80)
 
 	controller := NewController(scr, c, mockFileManager, mockInputProvider, mockLogger, mockEventBus)
+	controller.SetRefreshDelay(0)
 
 	mockLogger.EXPECT().Log(gomock.Any(), gomock.Any()).AnyTimes()
 	mockFileManager.EXPECT().OpenFile("test.txt").Return(nil)
@@ -376,6 +384,7 @@ func TestController_SpecialKeys(t *testing.T) {
 		msg := contents.NewMessage("")
 		scr := screen.NewScreen(mockBuilder, mockWriter, msg, cur, 24, 80)
 		controller := NewController(scr, c, mockFileManager, mockInputProvider, mockLogger, mockEventBus)
+	controller.SetRefreshDelay(0)
 
 		// RefreshScreen のモック
 		mockFileManager.EXPECT().GetFilename().Return("test.txt").AnyTimes()
@@ -404,6 +413,7 @@ func TestController_SpecialKeys(t *testing.T) {
 		msg := contents.NewMessage("")
 		scr := screen.NewScreen(mockBuilder, mockWriter, msg, cur, 24, 80)
 		controller := NewController(scr, c, mockFileManager, mockInputProvider, mockLogger, mockEventBus)
+	controller.SetRefreshDelay(0)
 
 		// RefreshScreen のモック
 		mockFileManager.EXPECT().GetFilename().Return("test.txt").AnyTimes()
@@ -454,6 +464,7 @@ func TestController_MouseWheel(t *testing.T) {
 		msg := contents.NewMessage("")
 		scr := screen.NewScreen(mockBuilder, mockWriter, msg, cur, 24, 80)
 		controller := NewController(scr, c, mockFileManager, mockInputProvider, mockLogger, mockEventBus)
+	controller.SetRefreshDelay(0)
 
 		// RefreshScreen のモック
 		mockFileManager.EXPECT().GetFilename().Return("test.txt").AnyTimes()
@@ -490,6 +501,7 @@ func TestController_MouseWheel(t *testing.T) {
 		msg := contents.NewMessage("")
 		scr := screen.NewScreen(mockBuilder, mockWriter, msg, cur, 24, 80)
 		controller := NewController(scr, c, mockFileManager, mockInputProvider, mockLogger, mockEventBus)
+	controller.SetRefreshDelay(0)
 
 		// RefreshScreen のモック
 		mockFileManager.EXPECT().GetFilename().Return("test.txt").AnyTimes()
@@ -530,6 +542,7 @@ func TestController_Quit(t *testing.T) {
 	scr := screen.NewScreen(mockBuilder, mockWriter, msg, cur, 24, 80)
 
 	controller := NewController(scr, c, mockFileManager, mockInputProvider, mockLogger, mockEventBus)
+	controller.SetRefreshDelay(0)
 
 	// RefreshScreen のモック
 	mockFileManager.EXPECT().GetFilename().Return("test.txt").AnyTimes()
@@ -577,6 +590,7 @@ func TestController_InputBuffer(t *testing.T) {
 	scr := screen.NewScreen(mockBuilder, mockWriter, msg, cur, 24, 80)
 
 	controller := NewController(scr, c, mockFileManager, mockInputProvider, mockLogger, mockEventBus)
+	controller.SetRefreshDelay(0)
 
 	// RefreshScreen のモック
 	mockFileManager.EXPECT().GetFilename().Return("test.txt").AnyTimes()

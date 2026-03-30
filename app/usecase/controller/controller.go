@@ -2,6 +2,7 @@ package controller
 
 import (
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/wasya-io/go-kilo/app/boundary/filemanager"
@@ -27,6 +28,9 @@ type Controller struct {
 	statusMessageDuration int
 	Quit                  chan struct{}
 	eventBus              *event.Bus // 追加: イベントバス
+	refreshTimer          *time.Timer
+	refreshMutex          sync.Mutex
+	refreshDelay          time.Duration
 }
 
 // GetContents はコントローラーが管理しているコンテンツを返します。
@@ -52,6 +56,7 @@ func NewController(
 		Quit:                  make(chan struct{}),
 		statusMessageDuration: 5,
 		eventBus:              eventBus, // 追加: イベントバスの設定
+		refreshDelay:          16 * time.Millisecond, // 60FPS相当のデバウンス
 	}
 
 	// イベントハンドラーの登録
@@ -172,16 +177,33 @@ func (c *Controller) createBufferHandler() event.Handler {
 	})
 }
 
+// SetRefreshDelay はテスト用にリフレッシュのデバウンス時間を変更します
+func (c *Controller) SetRefreshDelay(d time.Duration) {
+	c.refreshMutex.Lock()
+	defer c.refreshMutex.Unlock()
+	c.refreshDelay = d
+}
+
 func (c *Controller) createRefreshHandler() event.Handler {
 	return event.NewSingleTypeHandler(event.TypeRefresh, func(e event.Event) (bool, error) {
-		// チャネルに他のイベントが溜まっているか確認したいが、
-		// 現状のEventBusの実装ではチャネルの長さを確認できない。
-		// Phase 2では単純にRefreshScreenを呼び出すだけにする（イベント経由にすること自体が第一歩）。
-		// 完全なデバウンスはPhase 3以降で検討する。
-		// ただし、イベントとして独立したことで、メインループとは非同期に処理されるようになる。
+		c.refreshMutex.Lock()
+		defer c.refreshMutex.Unlock()
 
-		c.logger.Log("screen", "Handling refresh event")
-		c.RefreshScreen()
+		if c.refreshTimer != nil {
+			c.refreshTimer.Stop()
+		}
+
+		if c.refreshDelay == 0 {
+			c.logger.Log("screen", "Handling immediate refresh event")
+			c.RefreshScreen()
+			return true, nil
+		}
+
+		c.refreshTimer = time.AfterFunc(c.refreshDelay, func() {
+			c.logger.Log("screen", "Handling debounced refresh event")
+			c.RefreshScreen()
+		})
+
 		return true, nil
 	})
 }

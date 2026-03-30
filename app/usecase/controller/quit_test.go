@@ -54,6 +54,7 @@ func TestController_QuitSequence(t *testing.T) {
 	scr := screen.NewScreen(mockBuilder, mockWriter, msg, cur, 24, 80)
 
 	controller := NewController(scr, c, mockFileManager, mockInputProvider, mockLogger, mockEventBus)
+	controller.SetRefreshDelay(0)
 
 	// 1st Ctrl+X: Should trigger Warning and NOT Quit
 	// We expect GetInputEvents to be called once for first Ctrl+X
