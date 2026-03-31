@@ -2,7 +2,7 @@
 
 ## 調査結果サマリー
 
-フェーズ1 (イベントシステム基盤) は**完了**済みで、フェーズ2 (コンポーネント移行) は**半ば完了**です。コマンドパターンがイベント発行をラップする「ブリッジ」構成で動作しており、完全なイベント駆動への移行は途中です。
+フェーズ1 (イベントシステム基盤) および フェーズ2 (コンポーネント移行) は**完了**しました。コマンドパターンレイヤーを削除し、入力キーから直接イベントを発行する完全なイベント駆動アーキテクチャへ移行しました。すべてのテストが安定してパスし、イベントバッチ最適化（デバウンス処理）と高度な日本語IME入力にも対応しています。
 
 ## 実装済みコンポーネント
 
@@ -47,52 +47,49 @@ app/usecase/controller — イベント関連6 tests ALL PASS (0.3s)
   TestQuitEventHandlingDirtyWarning, TestForceQuitEventHandling
 ```
 
-## 現在のアーキテクチャ (ハイブリッド構成)
+## 現在のアーキテクチャ
 
 ```mermaid
 graph TD
-    A[キー入力] --> B[Controller.Process]
-    B --> C[createCommand]
-    C --> D[Command.Execute]
-    D --> E{イベント発行}
-    E -->|moveCursor| F[eventBus.Publish CursorEvent]
-    E -->|insertChar| G[eventBus.Publish BufferEvent]
-    E -->|Ctrl+S| H[PublishSaveEvent]
-    E -->|Ctrl+X| I[PublishQuitEvent]
-    F --> J[CursorHandler]
-    G --> K[BufferHandler]
-    H --> L[SaveHandler]
-    I --> M[QuitHandler]
-    J & K --> N[Publish RefreshEvent]
-    N --> O[RefreshHandler → RefreshScreen]
+    A[キー入力] --> B[Controller.HandleKeyEvent]
+    B --> E{イベントバス Publish}
+    E -->|moveCursor| F[CursorHandler]
+    E -->|insertChar| G[BufferHandler]
+    E -->|Ctrl+S| H[SaveHandler]
+    E -->|Ctrl+X| I[QuitHandler]
+    F & G --> N[Publish RefreshEvent]
+    N --> O[RefreshHandler]
+    O --> P[(16ms デバウンス処理)]
+    P --> Q[RefreshScreen]
 ```
 
-> [!IMPORTANT]
-> **キー入力 → Command → Event という二重構造**になっています。`Process()` メソッドは依然として `createCommand()` でコマンドを生成し、その中でイベントを発行しています。
+## 完了済みの主要課題
+
+| 課題 | 対応内容 |
+|---|---|
+| **Command→Event二重構造の解消** | `command` パッケージを廃止し、`handleKeyEvent` による直接イベント発行へリファクタリング完了。 |
+| **全テスト実行時のハング** | Command層削除とテスト時同期対応等により解消（完全安定化）。 |
+| **イベントバッチ処理のデバウンス** | `time.AfterFunc` を使用した 16ms の `RefreshEvent` デバウンスを導入し、連続入力での描画負荷を低減。 |
+| **日本語IME連続入力の途切れ** | 読み取りバッファを32Bから4096Bへ拡張し、大量のUTF-8文字の切り捨て・デコードエラーを解消。 |
 
 ## 未実装・課題一覧
 
 ### 🔴 高優先度
-
-| 課題 | 詳細 |
-|---|---|
-| **Command→Event二重構造の解消** | 現在コマンドがイベントをラップしているため、直接入力→イベント変換に移行すべき |
-| **全テスト実行時のハング** | `go test ./app/...` がタイムアウト。特定テストは通るが全体実行でデッドロックの可能性 |
-| **イベントバッチ処理のデバウンス** | `createRefreshHandler` のコメントに記載 — Phase 3以降で検討と明記 |
+現在、特筆すべきクリティカルな不具合・高優先度タスクはありません。
 
 ### 🟡 中優先度
 
 | 課題 | 詳細 |
 |---|---|
-| **マウス入力のイベント化不完全** | マウスホイール/クリックは `createCommand` 内でコマンド生成 → その中でイベント発行 |
-| **イベント優先順位制御** | ドキュメントに詳細な設計があるが未実装 |
 | **エラー伝播の改善** | `EventError` 構造体等、設計済みだが未実装 |
-| **キュー一元管理** | EventManagerとUI間でキューが分散している問題 |
+| **イベント優先順位制御** | FIFOキューと16msデバウンスで最適化済み（複雑な優先度制御キューは不要としてシンプル化） |
+| **キュー一元管理** | `event.Bus` による一元管理へ移行完了（分散キューは解消・実装済） |
 
 ### 🟢 低優先度 (フェーズ3)
 
 | 課題 | 詳細 |
 |---|---|
+| **高度なマウス操作対応** | ドラッグ選択、右クリック(コンテキスト)、中クリック(ペースト)、ダブル/トリプルクリック選択、水平スクロール等の一般的な操作機能の実装 |
 | プラグイン機構 | 未着手 |
 | メモリプール | 設計のみ |
 | パフォーマンスメトリクス | 設計のみ |
@@ -110,7 +107,8 @@ graph TD
 
 ## 次のステップの提案
 
-1. **全テストのハング問題の調査と修正** — `go test ./app/...` が通らないとCI/CDに支障
-2. **Command層を除去してInput→Event直接変換** — `createCommand` を `createEvent` に置換
-3. **RefreshEventのデバウンス実装** — 連続更新の最適化
-4. **ドキュメント (`event_driven_architecture.md`) の進捗反映** — 現状と乖離している箇所を更新
+Phase 2 の安定化が完了したため、今後はエッジケース対応とさらなる機能強化（中優先度リスト）に進みます。
+
+1. **エラー伝播・リカバリー機構の整備**: `EventError` カスタムエラーなどの定義と、バス内での伝播方法の確立。
+2. **イベントキューアーキテクチャの監視**: 既に単一バス(FIFO)と描画デバウンスによる一元管理・最適化は完了しているため、実運用における負荷（レイテンシ等）のモニタリングを継続する。
+3. **マウスイベントの拡充（フェーズ3）**: ドラッグ等の高度なマウス操作機能の追加（低優先度タスク）。

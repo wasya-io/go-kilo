@@ -76,8 +76,7 @@ func (c *Controller) registerEventHandlers() {
 			// これにより、"Save As"で指定された新しいファイル名が使用される
 			err := c.fileManager.SaveFile(saveEvent.Filename, c.contents.GetAllLines())
 			if err != nil {
-				c.setStatusMessage("Error saving file: %v", err)
-				return false, err
+				return false, fmt.Errorf("failed to save file: %w", err)
 			}
 			c.setStatusMessage("File saved")
 
@@ -139,6 +138,19 @@ func (c *Controller) registerEventHandlers() {
 	c.eventBus.Subscribe(c.createCursorHandler())
 	c.eventBus.Subscribe(c.createBufferHandler())
 	c.eventBus.Subscribe(c.createRefreshHandler())
+	c.eventBus.Subscribe(c.createErrorHandler())
+}
+
+func (c *Controller) createErrorHandler() event.Handler {
+	return event.NewSingleTypeHandler(event.TypeError, func(e event.Event) (bool, error) {
+		if errorEvent, ok := e.Payload.(event.ErrorEvent); ok {
+			c.logger.Log("error", fmt.Sprintf("Auto-caught event error during %s: %v", errorEvent.OriginalEvent.Type, errorEvent.Error))
+			// ステータスバーにエラー内容を表示
+			c.setStatusMessage("Error: %v", errorEvent.Error)
+			return true, nil
+		}
+		return false, nil
+	})
 }
 
 func (c *Controller) createCursorHandler() event.Handler {

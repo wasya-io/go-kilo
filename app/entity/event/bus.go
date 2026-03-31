@@ -134,7 +134,23 @@ func (b *Bus) dispatchEvent(event Event) {
 
 	// 誰も処理しなかった場合はデフォルトハンドラーに配送
 	if !handled && defaultHandler != nil {
-		defaultHandler.HandleEvent(event)
+		success, err := defaultHandler.HandleEvent(event)
+		if err != nil {
+			lastErr = fmt.Errorf("default handler error: %w", err)
+		}
+		if success {
+			handled = true
+		}
+	}
+
+	// カスタムエラー伝播: ハンドラーからエラーが返され、かつ対象が TypeError でなければ発行
+	if lastErr != nil && event.Type != TypeError {
+		errEvent := NewErrorEvent(&EventError{
+			OriginalEventType: event.Type,
+			Err:               lastErr,
+		}, event)
+		// デッドロックを回避するため非同期で発行
+		go b.Publish(errEvent)
 	}
 
 	// レスポンスチャネルがあれば結果を送信

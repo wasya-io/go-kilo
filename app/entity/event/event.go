@@ -15,6 +15,7 @@ const (
 	TypeBuffer   EventType = "buffer"   // バッファイベント
 	TypeCommand  EventType = "command"  // コマンド実行イベント
 	TypeResponse EventType = "response" // 応答イベント
+	TypeError    EventType = "error"    // エラーイベント
 )
 
 // Event はアプリケーション内で発生するイベントを表します。
@@ -61,6 +62,28 @@ type ResponseEvent struct {
 	Success bool   // 成功したかどうか
 	Message string // メッセージ
 	Error   error  // エラー情報
+}
+
+// EventError はイベントに関連するカスタムエラーです。
+type EventError struct {
+	OriginalEventType EventType
+	Err               error
+}
+
+// Error は error インターフェースを実装します。
+func (e *EventError) Error() string {
+	return "event error (" + string(e.OriginalEventType) + "): " + e.Err.Error()
+}
+
+// Unwrap は元のエラーを返します。
+func (e *EventError) Unwrap() error {
+	return e.Err
+}
+
+// ErrorEvent はエラーイベントのペイロードを表します。
+type ErrorEvent struct {
+	Error         error // 発生したエラー
+	OriginalEvent Event // エラーの発生源となったイベント
 }
 
 // NewEvent は新しいイベントを作成します。
@@ -121,5 +144,13 @@ func NewResponseEvent(success bool, message string, err error) Event {
 		Success: success,
 		Message: message,
 		Error:   err,
+	})
+}
+
+// NewErrorEvent は新しいエラーイベントを作成します。
+func NewErrorEvent(err error, originalEvent Event) Event {
+	return NewEvent(TypeError, ErrorEvent{
+		Error:         err,
+		OriginalEvent: originalEvent,
 	})
 }

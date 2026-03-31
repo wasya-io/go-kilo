@@ -1,6 +1,7 @@
 package event_test
 
 import (
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -188,5 +189,61 @@ func TestBusShutdown(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	if handler.WasCalled() {
 		t.Error("Handler was called after shutdown")
+	}
+}
+
+func TestBusErrorPropagation(t *testing.T) {
+	bus := event.NewBus()
+	defer bus.Shutdown()
+
+	expectedErr := errors.New("test handler error")
+
+	// エラーを返すハンドラーを作成
+	failingHandler := newTestHandler(
+		[]event.EventType{event.TypeSave},
+		func(e event.Event) (bool, error) {
+			return false, expectedErr
+		},
+	)
+	bus.Subscribe(failingHandler)
+
+	// エラーイベントを受け取るハンドラーを作成
+	errorHandler := newTestHandler(
+		[]event.EventType{event.TypeError},
+		func(e event.Event) (bool, error) {
+			if errorEvent, ok := e.Payload.(event.ErrorEvent); ok {
+				var targetErr *event.EventError
+				if errors.As(errorEvent.Error, &targetErr) {
+					if !errors.Is(targetErr.Err, expectedErr) {
+						t.Errorf("Expected extracted error to be '%v', got '%v'", expectedErr, targetErr.Err)
+					}
+					if targetErr.OriginalEventType != event.TypeSave {
+						t.Errorf("Expected original event type '%s', got '%s'", event.TypeSave, targetErr.OriginalEventType)
+					}
+				} else {
+					t.Errorf("Expected EventError wrapper but got %T", errorEvent.Error)
+				}
+				if errorEvent.OriginalEvent.Type != event.TypeSave {
+					t.Errorf("Expected OriginalEvent to have type '%s', got '%s'", event.TypeSave, errorEvent.OriginalEvent.Type)
+				}
+			} else {
+				t.Errorf("Expected payload to be ErrorEvent, got %T", e.Payload)
+			}
+			return true, nil
+		},
+	)
+	bus.Subscribe(errorHandler)
+
+	// 保存イベントを発行
+	bus.Publish(event.NewSaveEvent("test.txt", false))
+
+	// 非同期エラー伝播を待機
+	time.Sleep(50 * time.Millisecond)
+
+	if !failingHandler.WasCalled() {
+		t.Error("Failing handler was not called")
+	}
+	if !errorHandler.WasCalled() {
+		t.Error("Error handler was not called (error propagation failed)")
 	}
 }
