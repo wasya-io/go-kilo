@@ -36,7 +36,7 @@ func TestController_Process(t *testing.T) {
 	msg := contents.NewMessage("")
 	scr := screen.NewScreen(mockBuilder, mockWriter, msg, cur, 24, 80)
 
-	controller := NewController(scr, c, mockFileManager, mockInputProvider, mockLogger, mockEventBus)
+	controller := NewController(scr, c, mockFileManager, mockInputProvider, mockLogger, nil, mockEventBus)
 	controller.SetRefreshDelay(0)
 
 	// Process のモック期待値
@@ -94,7 +94,7 @@ func TestController_EditorOperations(t *testing.T) {
 		cur := cursor.NewCursor()
 		msg := contents.NewMessage("")
 		scr := screen.NewScreen(mockBuilder, mockWriter, msg, cur, 24, 80)
-		controller := NewController(scr, c, mockFileManager, mockInputProvider, mockLogger, mockEventBus)
+		controller := NewController(scr, c, mockFileManager, mockInputProvider, mockLogger, nil, mockEventBus)
 	controller.SetRefreshDelay(0)
 
 		// RefreshScreen のモック
@@ -121,7 +121,7 @@ func TestController_EditorOperations(t *testing.T) {
 		cur := cursor.NewCursor()
 		msg := contents.NewMessage("")
 		scr := screen.NewScreen(mockBuilder, mockWriter, msg, cur, 24, 80)
-		controller := NewController(scr, c, mockFileManager, mockInputProvider, mockLogger, mockEventBus)
+		controller := NewController(scr, c, mockFileManager, mockInputProvider, mockLogger, nil, mockEventBus)
 	controller.SetRefreshDelay(0)
 
 		// RefreshScreen のモック
@@ -151,7 +151,7 @@ func TestController_EditorOperations(t *testing.T) {
 		cur.SetCursor(1, 0) // カーソルは "a" の後ろ
 		msg := contents.NewMessage("")
 		scr := screen.NewScreen(mockBuilder, mockWriter, msg, cur, 24, 80)
-		controller := NewController(scr, c, mockFileManager, mockInputProvider, mockLogger, mockEventBus)
+		controller := NewController(scr, c, mockFileManager, mockInputProvider, mockLogger, nil, mockEventBus)
 	controller.SetRefreshDelay(0)
 
 		// RefreshScreen のモック
@@ -180,7 +180,7 @@ func TestController_EditorOperations(t *testing.T) {
 		cur := cursor.NewCursor()
 		msg := contents.NewMessage("")
 		scr := screen.NewScreen(mockBuilder, mockWriter, msg, cur, 24, 80)
-		controller := NewController(scr, c, mockFileManager, mockInputProvider, mockLogger, mockEventBus)
+		controller := NewController(scr, c, mockFileManager, mockInputProvider, mockLogger, nil, mockEventBus)
 	controller.SetRefreshDelay(0)
 
 		// RefreshScreen のモック
@@ -222,7 +222,7 @@ func TestController_Prompt(t *testing.T) {
 	msg := contents.NewMessage("")
 	scr := screen.NewScreen(mockBuilder, mockWriter, msg, cur, 24, 80)
 
-	controller := NewController(scr, c, mockFileManager, mockInputProvider, mockLogger, mockEventBus)
+	controller := NewController(scr, c, mockFileManager, mockInputProvider, mockLogger, nil, mockEventBus)
 	controller.SetRefreshDelay(0)
 
 	// プロンプト更新中に呼び出される RefreshScreen のモック
@@ -301,7 +301,7 @@ func TestController_MouseClick(t *testing.T) {
 	msg := contents.NewMessage("")
 	scr := screen.NewScreen(mockBuilder, mockWriter, msg, cur, 24, 80)
 
-	controller := NewController(scr, c, mockFileManager, mockInputProvider, mockLogger, mockEventBus)
+	controller := NewController(scr, c, mockFileManager, mockInputProvider, mockLogger, nil, mockEventBus)
 	controller.SetRefreshDelay(0)
 
 	// RefreshScreen のモック
@@ -346,7 +346,7 @@ func TestController_OpenFile(t *testing.T) {
 	msg := contents.NewMessage("")
 	scr := screen.NewScreen(mockBuilder, mockWriter, msg, cur, 24, 80)
 
-	controller := NewController(scr, c, mockFileManager, mockInputProvider, mockLogger, mockEventBus)
+	controller := NewController(scr, c, mockFileManager, mockInputProvider, mockLogger, nil, mockEventBus)
 	controller.SetRefreshDelay(0)
 
 	mockLogger.EXPECT().Log(gomock.Any(), gomock.Any()).AnyTimes()
@@ -383,7 +383,7 @@ func TestController_SpecialKeys(t *testing.T) {
 		cur := cursor.NewCursor()
 		msg := contents.NewMessage("")
 		scr := screen.NewScreen(mockBuilder, mockWriter, msg, cur, 24, 80)
-		controller := NewController(scr, c, mockFileManager, mockInputProvider, mockLogger, mockEventBus)
+		controller := NewController(scr, c, mockFileManager, mockInputProvider, mockLogger, nil, mockEventBus)
 	controller.SetRefreshDelay(0)
 
 		// RefreshScreen のモック
@@ -412,7 +412,7 @@ func TestController_SpecialKeys(t *testing.T) {
 		cur.SetCursor(4, 0) // インデント後のカーソル
 		msg := contents.NewMessage("")
 		scr := screen.NewScreen(mockBuilder, mockWriter, msg, cur, 24, 80)
-		controller := NewController(scr, c, mockFileManager, mockInputProvider, mockLogger, mockEventBus)
+		controller := NewController(scr, c, mockFileManager, mockInputProvider, mockLogger, nil, mockEventBus)
 	controller.SetRefreshDelay(0)
 
 		// RefreshScreen のモック
@@ -463,7 +463,7 @@ func TestController_MouseWheel(t *testing.T) {
 		cur := cursor.NewCursor()
 		msg := contents.NewMessage("")
 		scr := screen.NewScreen(mockBuilder, mockWriter, msg, cur, 24, 80)
-		controller := NewController(scr, c, mockFileManager, mockInputProvider, mockLogger, mockEventBus)
+		controller := NewController(scr, c, mockFileManager, mockInputProvider, mockLogger, nil, mockEventBus)
 	controller.SetRefreshDelay(0)
 
 		// RefreshScreen のモック
@@ -500,7 +500,7 @@ func TestController_MouseWheel(t *testing.T) {
 		cur.SetCursor(0, 3) // 初期位置
 		msg := contents.NewMessage("")
 		scr := screen.NewScreen(mockBuilder, mockWriter, msg, cur, 24, 80)
-		controller := NewController(scr, c, mockFileManager, mockInputProvider, mockLogger, mockEventBus)
+		controller := NewController(scr, c, mockFileManager, mockInputProvider, mockLogger, nil, mockEventBus)
 	controller.SetRefreshDelay(0)
 
 		// RefreshScreen のモック
@@ -541,7 +541,7 @@ func TestController_Quit(t *testing.T) {
 	msg := contents.NewMessage("")
 	scr := screen.NewScreen(mockBuilder, mockWriter, msg, cur, 24, 80)
 
-	controller := NewController(scr, c, mockFileManager, mockInputProvider, mockLogger, mockEventBus)
+	controller := NewController(scr, c, mockFileManager, mockInputProvider, mockLogger, nil, mockEventBus)
 	controller.SetRefreshDelay(0)
 
 	// RefreshScreen のモック
@@ -589,7 +589,7 @@ func TestController_InputBuffer(t *testing.T) {
 	msg := contents.NewMessage("")
 	scr := screen.NewScreen(mockBuilder, mockWriter, msg, cur, 24, 80)
 
-	controller := NewController(scr, c, mockFileManager, mockInputProvider, mockLogger, mockEventBus)
+	controller := NewController(scr, c, mockFileManager, mockInputProvider, mockLogger, nil, mockEventBus)
 	controller.SetRefreshDelay(0)
 
 	// RefreshScreen のモック

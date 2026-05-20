@@ -7,6 +7,7 @@ import (
 	"github.com/wasya-io/go-kilo/app/boundary/reader"
 	"github.com/wasya-io/go-kilo/app/boundary/writer"
 	"github.com/wasya-io/go-kilo/app/config"
+	"github.com/wasya-io/go-kilo/app/entity/core"
 	"github.com/wasya-io/go-kilo/app/entity/contents"
 	"github.com/wasya-io/go-kilo/app/entity/core/term"
 	"github.com/wasya-io/go-kilo/app/entity/cursor"
@@ -23,6 +24,9 @@ func NewEditor() (*editor.Editor, error) {
 
 	// イベントバスの初期化
 	eventBus := event.NewBus()
+
+	// メトリクス収集器の初期化
+	metrics := core.NewMetricsCollector(conf.MetricsEnabled, logger)
 
 	// エディタの初期化
 	c := contents.NewContents(logger)
@@ -43,12 +47,13 @@ func NewEditor() (*editor.Editor, error) {
 	screen := screen.NewScreen(builder, writer, message, cursor, screenRows, screenCols)
 
 	// イベントバスをコントローラーに渡す
-	controller := controller.NewController(screen, c, fileManager, inputProvider, logger, eventBus)
+	controller := controller.NewController(screen, c, fileManager, inputProvider, logger, metrics, eventBus)
 
 	ed, err := editor.New(
 		false,
 		conf,
 		logger,
+		metrics,
 		c,
 		inputProvider,
 		screen,

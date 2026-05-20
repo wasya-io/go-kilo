@@ -53,7 +53,7 @@ func TestController_QuitSequence(t *testing.T) {
 	msg := contents.NewMessage("")
 	scr := screen.NewScreen(mockBuilder, mockWriter, msg, cur, 24, 80)
 
-	controller := NewController(scr, c, mockFileManager, mockInputProvider, mockLogger, mockEventBus)
+	controller := NewController(scr, c, mockFileManager, mockInputProvider, mockLogger, nil, mockEventBus)
 	controller.SetRefreshDelay(0)
 
 	// 1st Ctrl+X: Should trigger Warning and NOT Quit

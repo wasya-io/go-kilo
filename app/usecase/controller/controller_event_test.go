@@ -67,6 +67,7 @@ func setupController(t *testing.T) (*controller.Controller, *mock_filemanager.Mo
 		mockFileManager,
 		mockInputProvider,
 		mockLogger,
+		nil,
 		eventBus,
 	)
 	controller.SetRefreshDelay(0)

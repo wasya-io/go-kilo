@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
+
+	"github.com/wasya-io/go-kilo/app/entity/core"
 )
 
 // Bus はイベントの発行と購読を管理するイベントバスです。
@@ -17,6 +20,7 @@ type Bus struct {
 	wg             sync.WaitGroup
 	defaultHandler Handler
 	synchronous    bool
+	metrics        *core.MetricsCollector
 }
 
 // NewBus は新しいイベントバスを作成します。
@@ -61,6 +65,18 @@ func (b *Bus) SetDefaultHandler(handler Handler) {
 	b.defaultHandler = handler
 }
 
+// SetMetricsCollector はメトリクス収集器を設定します。
+func (b *Bus) SetMetricsCollector(m *core.MetricsCollector) {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+	b.metrics = m
+}
+
+// EventQueueLength は現在のイベントキュー長を返します。
+func (b *Bus) EventQueueLength() int {
+	return len(b.eventChan)
+}
+
 // SetSynchronous はイベントバスの同期モードを設定します。
 // テスト用：trueの場合、Publishはイベントを即座に処理します。
 func (b *Bus) SetSynchronous(sync bool) {
@@ -73,16 +89,27 @@ func (b *Bus) SetSynchronous(sync bool) {
 func (b *Bus) Publish(event Event) {
 	b.mutex.RLock()
 	isSync := b.synchronous
+	metrics := b.metrics
 	b.mutex.RUnlock()
+
+	if metrics != nil {
+		metrics.RecordEventPublished(string(event.Type))
+	}
 
 	if isSync {
 		b.dispatchEvent(event)
+		if metrics != nil {
+			metrics.RecordEventQueueLength(b.EventQueueLength())
+		}
 		return
 	}
 
 	select {
 	case b.eventChan <- event:
 		// イベントが送信された
+		if metrics != nil {
+			metrics.RecordEventQueueLength(b.EventQueueLength())
+		}
 	case <-b.ctx.Done():
 		// バスが停止された
 	}
@@ -101,6 +128,9 @@ func (b *Bus) processEvents() {
 	for {
 		select {
 		case event := <-b.eventChan:
+			if b.metrics != nil {
+				b.metrics.RecordEventQueueLength(b.EventQueueLength())
+			}
 			b.dispatchEvent(event)
 		case <-b.ctx.Done():
 			return // コンテキストがキャンセルされたら終了
@@ -118,6 +148,7 @@ func (b *Bus) dispatchEvent(event Event) {
 
 	var handled bool
 	var lastErr error
+	start := time.Now()
 
 	// 登録されたハンドラーにイベントを配送
 	if exists {
@@ -130,6 +161,11 @@ func (b *Bus) dispatchEvent(event Event) {
 				handled = true
 			}
 		}
+	}
+
+	duration := time.Since(start)
+	if b.metrics != nil {
+		b.metrics.RecordEventHandled(string(event.Type), handled, duration)
 	}
 
 	// 誰も処理しなかった場合はデフォルトハンドラーに配送

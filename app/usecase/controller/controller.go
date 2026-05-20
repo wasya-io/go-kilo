@@ -22,6 +22,7 @@ type Controller struct {
 	fileManager           filemanager.FileManager
 	inputProvider         input.Provider
 	logger                core.Logger
+	metrics               *core.MetricsCollector
 	eventBuffer           []key.KeyEvent
 	quitWarningShown      bool
 	debugMode             bool
@@ -45,9 +46,11 @@ func NewController(
 	fileManager filemanager.FileManager,
 	inputProvider input.Provider,
 	logger core.Logger,
+	metrics *core.MetricsCollector,
 	eventBus *event.Bus, // 追加: イベントバス
 ) *Controller {
 	c := &Controller{
+		metrics:               metrics,
 		screen:                screen,
 		contents:              contents,
 		fileManager:           fileManager,
@@ -249,6 +252,8 @@ func (c *Controller) PublishQuitEvent(force bool) {
 }
 
 func (c *Controller) RefreshScreen() error {
+	start := time.Now()
+
 	// UI更新の前にスクロール位置を更新
 	c.updateScroll()
 
@@ -263,7 +268,15 @@ func (c *Controller) RefreshScreen() error {
 	}
 
 	// メッセージ表示後は即座にフラッシュする
-	return c.screen.Flush()
+	if err := c.screen.Flush(); err != nil {
+		return err
+	}
+
+	if c.metrics != nil && c.metrics.Enabled() {
+		c.metrics.RecordRefreshDuration(time.Since(start))
+	}
+
+	return nil
 }
 
 // updateScroll はカーソル位置に基づいてスクロール位置を更新する

@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"runtime"
 	"runtime/debug"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/wasya-io/go-kilo/app/boundary/provider/input"
 	"github.com/wasya-io/go-kilo/app/config"
@@ -31,6 +33,7 @@ type Editor struct {
 	cleanupOnce      sync.Once
 	cleanupChan      chan struct{}
 	logger           core.Logger
+	metrics          *core.MetricsCollector
 	inputProvider    input.Provider
 	eventBus         *event.Bus // イベントバスを追加
 }
@@ -45,6 +48,7 @@ func New(
 	testMode bool,
 	conf *config.Config,
 	logger core.Logger,
+	metrics *core.MetricsCollector,
 	buffer *contents.Contents,
 	inputProvider input.Provider,
 	screen *screen.Screen,
@@ -61,8 +65,13 @@ func New(
 		quitWarningShown: false,
 		cleanupChan:      make(chan struct{}),
 		logger:           logger,
+		metrics:          metrics,
 		inputProvider:    inputProvider,
 		eventBus:         eventBus, // イベントバスを設定
+	}
+
+	if e.eventBus != nil && e.metrics != nil {
+		e.eventBus.SetMetricsCollector(e.metrics)
 	}
 
 	if !testMode {
@@ -151,6 +160,10 @@ func (e *Editor) Run() error {
 		return err
 	}
 
+	if e.metrics != nil && e.metrics.Enabled() {
+		go e.startMetricsTicker()
+	}
+
 	for {
 		select {
 		case <-e.controller.Quit:
@@ -161,5 +174,30 @@ func (e *Editor) Run() error {
 				return err
 			}
 		}
+	}
+}
+
+func (e *Editor) startMetricsTicker() {
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			e.collectSystemMetrics()
+		case <-e.cleanupChan:
+			return
+		}
+	}
+}
+
+func (e *Editor) collectSystemMetrics() {
+	var mem runtime.MemStats
+	runtime.ReadMemStats(&mem)
+	if e.eventBus != nil {
+		e.metrics.RecordEventQueueLength(e.eventBus.EventQueueLength())
+	}
+	if e.metrics != nil {
+		e.metrics.RecordSystemStats(mem.Alloc, mem.TotalAlloc, mem.Sys, runtime.NumGoroutine())
 	}
 }

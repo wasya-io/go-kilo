@@ -11,5 +11,6 @@
     },
     "go.testTags": null,
     "go.testFlags": ["-v", "-run", "^Test"],
-    "go.mod": "github.com/wasya-io/go-kilo"
+    "go.mod": "github.com/wasya-io/go-kilo",
+    "kiroAgent.configureMCP": "Disabled"
 }
